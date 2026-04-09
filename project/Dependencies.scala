@@ -8,7 +8,7 @@ object Dependencies {
 
   val catsEffect: Seq[ModuleID] = Seq(catsEffectCore)
 
-  // Liquibase + PostgreSQL JDBC driver
+  // Liquibase + PostgreSQL JDBC driver (runtime classpath for MigrationRunner)
   private val liquibaseCore = "org.liquibase" % "liquibase-core" % liquibaseVersion
   private val postgresqlDriver =
     "org.postgresql" % "postgresql" % postgresqlDriverVersion
@@ -20,11 +20,9 @@ object Dependencies {
 
   val h2: Seq[ModuleID] = Seq(h2Database)
 
-  // Doobie — MigrationRunner.migrateF uses Sync[F] from cats-effect, and downstream
-  // projects that depend on db-migrations in test scope via the DockerPostgresSpec trait
-  // will pick up doobie transitively if they need it. db-migrations itself only needs
-  // doobie-core for type availability. We include the full trio to match the votr
-  // dbMigrations subproject's effective classpath.
+  // Doobie — MigrationRunner.migrateF uses Sync[F] from cats-effect.
+  // We include doobie-core for type availability matching the legacy effective
+  // classpath.
   private val doobieCore     = "org.tpolecat" %% "doobie-core" % doobieVersion
   private val doobieHikari   = "org.tpolecat" %% "doobie-hikari" % doobieVersion
   private val doobiePostgres = "org.tpolecat" %% "doobie-postgres" % doobieVersion
@@ -41,4 +39,18 @@ object Dependencies {
   private val mockitoCore = "org.mockito" % "mockito-core" % "5.8.0" % Test
 
   val testDeps: Seq[ModuleID] = Seq(mockitoCore)
+
+  // ── Testkit support ────────────────────────────────────────────────────────
+  //
+  // The runner subproject publishes a reusable `DockerPostgresSpec` trait under
+  // `repcheck.db.migrations`. Because the trait lives in `src/main/scala`
+  // (so it can be consumed by downstream test suites via the published JAR),
+  // scalatest must be on the Compile classpath rather than the Test classpath.
+  //
+  // We mark it as `Provided` so consumers must add scalatest explicitly in their
+  // own test scope, avoiding a transitive production dependency.
+  private val scalatestProvided =
+    "org.scalatest" %% "scalatest" % scalatestVersion % Provided
+
+  val testkitProvided: Seq[ModuleID] = Seq(scalatestProvided)
 }

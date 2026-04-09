@@ -34,14 +34,17 @@ jobs:
       - name: Check formatting (Scalafmt)
         run: sbt scalafmtCheckAll
 
-      - name: Compile (includes WartRemover + tpolecat checks)
-        run: sbt compile
+      - name: Compile all subprojects (WartRemover + tpolecat)
+        run: sbt "changesets/compile" "runner/compile" "app/compile"
 
       - name: Check Scalafix rules
         run: sbt "scalafixAll --check"
 
       - name: Run tests with coverage
-        run: sbt coverage test coverageReport
+        run: sbt coverage "runner/test" "runner/coverageReport"
+
+      - name: Build Docker image (validation only, no push)
+        run: sbt "app/Docker/stage"
 
       - name: Upload coverage reports to Codecov
         uses: codecov/codecov-action@v5

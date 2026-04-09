@@ -3,30 +3,122 @@
 RepCheck Liquibase migration runner.
 
 This repository owns the authoritative PostgreSQL schema for the RepCheck
-platform and produces a Cloud Run Job Docker image that applies the changesets
-against a target database: AlloyDB in staging and prod, Cloud SQL in dev, and
+platform and produces three consumable artifacts:
+
+1. **`repcheck-db-migrations-changesets`** — a resources-only JAR containing
+   the Liquibase master changelog plus every `.sql` file on the classpath.
+2. **`repcheck-db-migrations-runner`** — the Scala library with
+   `MigrationRunner`, `ConnectionRetry`, the typed exceptions, and the
+   reusable `DockerPostgresSpec` trait. Depends on the changesets
+   JAR, so consumers only need this one coordinate.
+3. **Cloud Run Job Docker image** — built from the `app` subproject
+   (`MigrationApp`), published to GitHub Container Registry.
+
+The target database is AlloyDB in staging and prod, Cloud SQL in dev, and
 AlloyDB Omni (Docker) for local development and integration tests.
 
-## What lives here
+## Subproject layout
 
-- `repcheck-db-migrations/src/main/resources/db/changelog/` — the Liquibase
-  master changelog and its per-changeset SQL files (`001-initial-schema.sql`
-  through `009-scoring-architecture.sql`).
-- `repcheck-db-migrations/src/main/scala/repcheck/db/migrations/` —
-  - `MigrationApp` — the IOApp Cloud Run entry point.
-  - `MigrationRunner` — a Liquibase CommandScope wrapper used by the app and
-    by downstream projects that need to apply migrations in tests.
-  - `ConnectionRetry` — exponential-backoff JDBC connect used to tolerate
-    AlloyDB Omni container startup ordering.
-- `repcheck-db-migrations/src/test/scala/repcheck/db/migrations/` — unit tests
-  (H2-backed) plus `DockerPostgresSpec`, a reusable trait that spins up an
-  AlloyDB Omni container and applies migrations before each suite.
-- `schema-diagram.mermaid` — the canonical ER diagram.
+```
+repcheck-db-migrations/
+  changesets/     — resources-only JAR (db/changelog/**)
+  runner/         — publishable library (MigrationRunner + DockerPostgresSpec)
+  app/            — IOApp entry point + Docker image (not published to Maven)
+```
 
-## Running migrations locally
+## Artifact coordinates
 
-Against an AlloyDB Omni container started by the votr
-`docker-compose-local-dev.yml`:
+Both JARs are published to GitHub Packages on merge to `main`:
+
+```scala
+resolvers += "GitHub Packages - db-migrations" at
+  "https://maven.pkg.github.com/Eligio-Taveras/repcheck-db-migrations"
+
+libraryDependencies ++= Seq(
+  "com.repcheck" %% "repcheck-db-migrations-runner"      % "<version>",
+  // transitively pulls repcheck-db-migrations-changesets
+)
+```
+
+The `runner` POM declares a transitive dependency on `changesets`, so most
+consumers do not need to add the changesets JAR directly.
+
+## Consuming the runner in a downstream test suite
+
+The `runner` artifact publishes the `DockerPostgresSpec` trait in
+`src/main/scala` so downstream test suites can reuse it without paying a
+production dependency on scalatest — scalatest is marked `Provided`, so
+consumers add it themselves to their `Test` scope.
+
+```scala
+libraryDependencies ++= Seq(
+  "com.repcheck" %% "repcheck-db-migrations-runner" % "<version>" % Test,
+  "org.scalatest" %% "scalatest"                    % "3.2.18"    % Test
+)
+```
+
+```scala
+import org.scalatest.flatspec.AnyFlatSpec
+import org.scalatest.matchers.should.Matchers
+import repcheck.db.migrations.{DockerPostgresSpec, DockerRequired}
+
+class MyRepositorySpec extends AnyFlatSpec with Matchers with DockerPostgresSpec {
+  "my repo" should "query the migrated schema" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      // database already has every RepCheck migration applied
+    } finally conn.close()
+  }
+}
+```
+
+`DockerPostgresSpec.beforeAll` starts an AlloyDB Omni container, waits for
+readiness, and runs `MigrationRunner.migrate` against the fresh database.
+`afterAll` removes the container.
+
+## Consuming just the changesets JAR
+
+If a downstream project has its own Liquibase wiring, it can depend on the
+changesets JAR alone and point Liquibase at the classpath resource:
+
+```scala
+libraryDependencies += "com.repcheck" % "repcheck-db-migrations-changesets" % "<version>"
+```
+
+```scala
+import liquibase.command.CommandScope
+import liquibase.command.core.UpdateCommandStep
+// ...
+new CommandScope("update")
+  .addArgumentValue(UpdateCommandStep.CHANGELOG_FILE_ARG, "db/changelog/db.changelog-master.yaml")
+  // ...
+```
+
+Note: the `changesets` artifact is a plain Java JAR (no `_3` Scala suffix).
+
+## Pulling and running the Docker image
+
+The `app` subproject produces a Google Distroless Java 21 image that runs
+`repcheck.db.migrations.MigrationApp`. It is published on tagged releases to
+GitHub Container Registry:
+
+```bash
+docker pull ghcr.io/eligio-taveras/repcheck-db-migrations-runner:<version>
+
+docker run --rm \
+  -e DATABASE_HOST=... \
+  -e DATABASE_PORT=5432 \
+  -e DATABASE_NAME=repcheck \
+  -e DATABASE_USER=... \
+  -e DATABASE_PASSWORD=... \
+  ghcr.io/eligio-taveras/repcheck-db-migrations-runner:<version>
+```
+
+The runner retries the JDBC connect with exponential backoff until the
+database is reachable, then applies all pending changesets and exits.
+Cloud Run Job deployment is managed out of the infrastructure repo.
+
+## Running migrations locally (from source)
 
 ```bash
 export DATABASE_HOST=localhost
@@ -34,58 +126,50 @@ export DATABASE_PORT=5432
 export DATABASE_NAME=repcheck
 export DATABASE_USER=postgres
 export DATABASE_PASSWORD=postgres
-sbt "repcheckdbmigrations/run"
+sbt "app/run"
 ```
-
-The runner retries with exponential backoff until the database is reachable,
-then applies all pending changesets and exits.
 
 ## Tests
 
 ```bash
-sbt test
+sbt runner/test
 ```
 
-Runs four specs:
+Runs four specs (15 tests total):
 
-- `ChangelogValidationSpec` — parses the changelog YAML and validates it
-  against an in-memory H2 database. No Docker required.
-- `ConnectionRetrySpec` — exercises the retry logic against H2 and a bogus
-  URL. No Docker required.
-- `MigrationRunnerSpec` — starts an AlloyDB Omni container and verifies every
-  changeset applies cleanly. Tagged `DockerRequired` — requires a running
-  Docker daemon.
-- `DockerPostgresSpec` — companion trait, exercised transitively.
+- `ChangelogValidationSpec` (2) — parses the changelog YAML and validates
+  it against an in-memory H2 database. No Docker required.
+- `ConnectionRetrySpec` (6) — exercises the retry logic against H2 and a
+  bogus URL. No Docker required.
+- `MigrationRunnerSpec` (7) — starts an AlloyDB Omni container via the
+  `DockerPostgresSpec` trait and verifies every changeset applies
+  cleanly, every expected table exists, seed data is present, and HNSW
+  vector indexes are created. Tagged `DockerRequired`.
 
 To skip the Docker-dependent tests locally:
 
 ```bash
-sbt "testOnly -- -l DockerRequired"
+sbt "runner/testOnly -- -l DockerRequired"
 ```
 
 ## CI
 
-GitHub Actions (`.github/workflows/ci.yml`) runs on every push and pull
-request:
+`.github/workflows/ci.yml` runs on every push and pull request:
 
 1. `sbt scalafmtCheckAll` — formatting.
-2. `sbt compile` — WartRemover + tpolecat gates.
+2. `sbt changesets/compile runner/compile app/compile` — WartRemover +
+   tpolecat gates on all three subprojects.
 3. `sbt "scalafixAll --check"` — import ordering + unused imports.
-4. `sbt coverage test coverageReport` — tests with scoverage.
-5. Codecov upload (patch coverage gate 90%).
+4. `sbt coverage runner/test runner/coverageReport` — runner tests with
+   scoverage.
+5. `sbt app/Docker/stage` — validates the Dockerfile build.
+6. Codecov upload (patch coverage gate 90% against `runner`).
 
-The CI workers have Docker available, so `MigrationRunnerSpec` runs in full
-on every PR.
-
-## Container image
-
-The `Dockerfile` produces a Google Distroless Java 21 image that runs
-`repcheck.db.migrations.MigrationApp`. It reads connection details from
-`DATABASE_HOST`, `DATABASE_PORT`, `DATABASE_NAME`, `DATABASE_USER`, and
-`DATABASE_PASSWORD`, retries the JDBC connect to survive AlloyDB startup
-races, then applies pending changesets and exits.
-
-Cloud Run Job deployment is managed out of the infrastructure repo.
+`.github/workflows/release.yml` runs on merge to `main`: it derives the next
+semver tag from the merged PR's labels (`release:major`, `release:minor`,
+`release:patch`, `release:skip`), tags the commit, publishes the `changesets`
+and `runner` JARs to GitHub Packages, and pushes the Docker image for `app`
+to GitHub Container Registry.
 
 ## Pre-push CI checks
 

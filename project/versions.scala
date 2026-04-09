@@ -5,4 +5,5 @@ object Versions {
   val h2Version               = "2.2.224"
   val doobieVersion           = "1.0.0-RC5"
   val logbackVersion          = "1.5.6"
+  val scalatestVersion        = "3.2.18"
 }
