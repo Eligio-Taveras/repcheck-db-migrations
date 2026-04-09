@@ -97,7 +97,12 @@ jobs:
 
       - name: Publish changesets + runner JARs to GitHub Packages
         if: steps.labels.outputs.bump != 'skip'
-        run: sbt changesets/publish runner/publish
+        # coverageOff is defensive — coverageEnabled should never be on by
+        # default (see build.sbt), but this guarantees a clean JAR even if
+        # someone re-adds it. Without this, scoverage bytecode instrumentation
+        # with absolute GHA runner paths gets baked into the published JAR,
+        # crashing consumers on classload with FileNotFoundException.
+        run: sbt coverageOff clean changesets/publish runner/publish
 
       # ── Push the Docker image for the app subproject to ghcr.io ──
       - name: Log in to GitHub Container Registry
