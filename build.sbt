@@ -100,7 +100,7 @@ lazy val changesets = (project in file("changesets"))
 
 // ── runner ────────────────────────────────────────────────────────────────────
 // The publishable Scala library: MigrationRunner, ConnectionRetry, typed
-// exceptions, and the reusable `testkit.DockerPostgresSpec` trait.
+// exceptions, and the reusable `DockerPostgresSpec` trait.
 // Depends on `changesets` so the published POM transitively pulls the
 // changelog JAR onto consumers' classpaths.
 lazy val runner = (project in file("runner"))

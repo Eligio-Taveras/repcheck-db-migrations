@@ -43,7 +43,7 @@ object Dependencies {
   // ── Testkit support ────────────────────────────────────────────────────────
   //
   // The runner subproject publishes a reusable `DockerPostgresSpec` trait under
-  // `repcheck.db.migrations.testkit`. Because the trait lives in `src/main/scala`
+  // `repcheck.db.migrations`. Because the trait lives in `src/main/scala`
   // (so it can be consumed by downstream test suites via the published JAR),
   // scalatest must be on the Compile classpath rather than the Test classpath.
   //

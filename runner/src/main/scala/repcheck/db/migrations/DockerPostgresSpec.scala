@@ -1,4 +1,4 @@
-package repcheck.db.migrations.testkit
+package repcheck.db.migrations
 
 import java.sql.{Connection, DriverManager}
 import java.util.UUID
@@ -11,7 +11,6 @@ import cats.effect.unsafe.implicits.global
 import cats.effect.{IO, Resource}
 
 import org.scalatest.{BeforeAndAfterAll, Suite, Tag}
-import repcheck.db.migrations.MigrationRunner
 
 /**
  * Immutable AlloyDB Omni container info returned by DockerPostgres.resource.

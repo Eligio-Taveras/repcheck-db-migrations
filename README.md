@@ -9,7 +9,7 @@ platform and produces three consumable artifacts:
    the Liquibase master changelog plus every `.sql` file on the classpath.
 2. **`repcheck-db-migrations-runner`** — the Scala library with
    `MigrationRunner`, `ConnectionRetry`, the typed exceptions, and the
-   reusable `testkit.DockerPostgresSpec` trait. Depends on the changesets
+   reusable `DockerPostgresSpec` trait. Depends on the changesets
    JAR, so consumers only need this one coordinate.
 3. **Cloud Run Job Docker image** — built from the `app` subproject
    (`MigrationApp`), published to GitHub Container Registry.
@@ -22,7 +22,7 @@ AlloyDB Omni (Docker) for local development and integration tests.
 ```
 repcheck-db-migrations/
   changesets/     — resources-only JAR (db/changelog/**)
-  runner/         — publishable library (MigrationRunner + testkit)
+  runner/         — publishable library (MigrationRunner + DockerPostgresSpec)
   app/            — IOApp entry point + Docker image (not published to Maven)
 ```
 
@@ -45,7 +45,7 @@ consumers do not need to add the changesets JAR directly.
 
 ## Consuming the runner in a downstream test suite
 
-The `runner` artifact publishes the `testkit.DockerPostgresSpec` trait in
+The `runner` artifact publishes the `DockerPostgresSpec` trait in
 `src/main/scala` so downstream test suites can reuse it without paying a
 production dependency on scalatest — scalatest is marked `Provided`, so
 consumers add it themselves to their `Test` scope.
@@ -60,7 +60,7 @@ libraryDependencies ++= Seq(
 ```scala
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-import repcheck.db.migrations.testkit.{DockerPostgresSpec, DockerRequired}
+import repcheck.db.migrations.{DockerPostgresSpec, DockerRequired}
 
 class MyRepositorySpec extends AnyFlatSpec with Matchers with DockerPostgresSpec {
   "my repo" should "query the migrated schema" taggedAs DockerRequired in {
@@ -142,7 +142,7 @@ Runs four specs (15 tests total):
 - `ConnectionRetrySpec` (6) — exercises the retry logic against H2 and a
   bogus URL. No Docker required.
 - `MigrationRunnerSpec` (7) — starts an AlloyDB Omni container via the
-  `testkit.DockerPostgresSpec` trait and verifies every changeset applies
+  `DockerPostgresSpec` trait and verifies every changeset applies
   cleanly, every expected table exists, seed data is present, and HNSW
   vector indexes are created. Tagged `DockerRequired`.
 

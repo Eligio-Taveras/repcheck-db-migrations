@@ -2,7 +2,6 @@ package repcheck.db.migrations
 
 import org.scalatest.flatspec.AnyFlatSpec
 import org.scalatest.matchers.should.Matchers
-import repcheck.db.migrations.testkit.{DockerPostgresSpec, DockerRequired}
 
 /**
  * Verifies that all Liquibase migrations apply cleanly to a real pgvector PostgreSQL 16 database.
