@@ -113,7 +113,12 @@ lazy val runner = (project in file("runner"))
     libraryDependencies ++=
       liquibase ++ h2 ++ catsEffect ++ doobie ++ logging ++ testDeps ++ testkitProvided,
     exceptionUniquenessRootPackages := Seq("repcheck.db.migrations"),
-    coverageEnabled := true,
+    // NOTE: coverageEnabled is intentionally NOT set here. Turning it on in
+    // default settings bakes scoverage bytecode instrumentation (with absolute
+    // GHA runner paths) into the published JAR, which crashes consumers on
+    // classload with FileNotFoundException for scoverage.measurements.<uuid>.
+    // Run coverage explicitly for local/CI measurement instead:
+    //   sbt coverage test coverageReport coverageOff
     // DockerPostgresSpec testkit lives in src/main/scala so it can be published
     // for downstream reuse. It is exercised transitively by MigrationRunnerSpec
     // and is not the locus of any custom business logic, so exclude it from
