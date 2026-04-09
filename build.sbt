@@ -3,6 +3,7 @@ import sbt.Keys.libraryDependencies
 import sbt.Def
 import Dependencies.*
 import com.repcheck.sbt.ExceptionUniquenessPlugin.autoImport.exceptionUniquenessRootPackages
+import com.typesafe.sbt.packager.docker.DockerPermissionStrategy
 
 val isScala212: Def.Initialize[Boolean] = Def.setting {
   VersionNumber(scalaVersion.value).matchesSemVer(SemanticSelector("2.12.x"))
@@ -64,7 +65,11 @@ lazy val dockerSettings = Seq(
   dockerBaseImage := "gcr.io/distroless/java21-debian12",
   dockerExposedPorts := Seq.empty,
   dockerUpdateLatest := true,
-  Docker / daemonUser := "appuser",
+  // Distroless has no shell (/bin/sh), chmod, or useradd — disable all RUN commands.
+  // The distroless java21-debian12 image ships with a "nonroot" user (uid 65532).
+  dockerPermissionStrategy := DockerPermissionStrategy.None,
+  Docker / daemonUserUid := None,
+  Docker / daemonUser := "nonroot",
 )
 
 lazy val root = (project in file("."))
