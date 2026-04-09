@@ -97,3 +97,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 010-bill-subject-history-embedding
+      author: repcheck
+      comment: "Add embedding column to bill_subject_history to match bill_subjects table"
+      changes:
+        - sqlFile:
+            path: changes/010-bill-subject-history-embedding.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
