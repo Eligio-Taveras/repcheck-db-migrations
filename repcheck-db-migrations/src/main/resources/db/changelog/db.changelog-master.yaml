@@ -1,0 +1,99 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-initial-schema
+      author: repcheck
+      comment: "Initial RepCheck schema — 24 tables covering Congress.gov entities, LLM analysis, scoring, and pipeline tracking"
+      changes:
+        - sqlFile:
+            path: changes/001-initial-schema.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 002-schema-expansion
+      author: repcheck
+      comment: "Schema expansion — adds reasoning to score_history, text availability tracking, and amendment tables"
+      changes:
+        - sqlFile:
+            path: changes/002-schema-expansion.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 003-text-sections-concept-groups
+      author: repcheck
+      comment: "Section-level text storage with embeddings and first-class concept groups decoupled from analysis runs"
+      changes:
+        - sqlFile:
+            path: changes/003-text-sections-concept-groups.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 004-question-bank
+      author: repcheck
+      comment: "Pre-tagged question bank for user political stance collection — questions, topic mappings, answer options, user responses"
+      changes:
+        - sqlFile:
+            path: changes/004-question-bank.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 005-analysis-schema-alignment
+      author: repcheck
+      comment: "Align schema with Component 10 LLM Analysis spec — finding_types INT PK, bill_analyses expansion, pass_number on analysis tables"
+      changes:
+        - sqlFile:
+            path: changes/005-analysis-schema-alignment.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 006-amendment-vote-linkage
+      author: repcheck
+      comment: "Link amendment votes to amendments — adds amendment_id to votes/vote_history/member_bill_stances, plus amendment_concept_summaries table for amendment-level explanations"
+      changes:
+        - sqlFile:
+            path: changes/006-amendment-vote-linkage.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 007-amendment-text-support
+      author: repcheck
+      comment: "Amendment text ingestion — adds text fields to amendments table and creates amendment_text_versions for append-only text storage"
+      changes:
+        - sqlFile:
+            path: changes/007-amendment-text-support.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 008-score-reasoning
+      author: repcheck
+      comment: "Add reasoning TEXT and reasoning_embedding vector(1536) to scores, reasoning_embedding to score_history for searchable alignment explanations"
+      changes:
+        - sqlFile:
+            path: changes/008-score-reasoning.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 009-scoring-architecture
+      author: repcheck
+      comment: "Batch scoring architecture — 5 new tables (pairings, stance topics, alignments, materialization status) plus score status/overlap fields"
+      changes:
+        - sqlFile:
+            path: changes/009-scoring-architecture.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false

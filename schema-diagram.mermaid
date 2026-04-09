@@ -1,0 +1,370 @@
+erDiagram
+    us_states {
+        text state_code PK
+        text state_name UK
+        boolean is_territory
+    }
+
+    members {
+        text member_id PK
+        text first_name
+        text last_name
+        text direct_order_name
+        text inverted_order_name
+        text honorific_name
+        text birth_year
+        text current_party
+        text state
+        int district
+        text image_url
+        text image_attribution
+        text official_url
+        timestamp update_date
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    member_terms {
+        uuid term_id PK
+        text member_id FK
+        text chamber
+        int congress
+        int start_year
+        int end_year
+        text member_type
+        text state_code
+        text state_name
+        int district
+    }
+
+    member_party_history {
+        uuid party_history_id PK
+        text member_id FK
+        text party_name
+        text party_abbreviation
+        int start_year
+    }
+
+    bills {
+        text bill_id PK
+        int congress
+        text bill_type
+        int number
+        text title
+        text origin_chamber
+        text origin_chamber_code
+        date introduced_date
+        text policy_area
+        date latest_action_date
+        text latest_action_text
+        text constitutional_authority_text
+        text sponsor_bioguide_id FK
+        text text_url
+        text text_format
+        text text_version_type
+        timestamp text_date
+        text text_content
+        vector text_embedding
+        text summary_text
+        text summary_action_desc
+        date summary_action_date
+        timestamp update_date
+        timestamp update_date_including_text
+        text legislation_url
+        text api_url
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    bill_cosponsors {
+        text bill_id FK
+        text member_id FK
+        boolean is_original_cosponsor
+        date sponsorship_date
+    }
+
+    bill_subjects {
+        text bill_id FK
+        text subject_name PK
+        vector embedding
+        timestamp update_date
+    }
+
+    votes {
+        text vote_id PK
+        int congress
+        text chamber
+        int roll_number
+        int session_number
+        text bill_id FK
+        text question
+        text vote_type
+        text vote_method
+        text result
+        timestamp vote_date
+        text legislation_number
+        text legislation_type
+        text legislation_url
+        text source_data_url
+        timestamp update_date
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    vote_positions {
+        text vote_id FK
+        text member_id FK
+        text position
+        text party_at_vote
+        text state_at_vote
+        timestamp created_at
+    }
+
+    vote_history {
+        uuid history_id PK
+        text vote_id
+        int congress
+        text chamber
+        int roll_number
+        int session_number
+        text bill_id
+        text question
+        text vote_type
+        text vote_method
+        text result
+        timestamp vote_date
+        text legislation_number
+        text legislation_type
+        text legislation_url
+        text source_data_url
+        timestamp update_date
+        timestamp archived_at
+    }
+
+    vote_history_positions {
+        uuid history_id FK
+        text member_id
+        text position
+        text party_at_vote
+        text state_at_vote
+    }
+
+    amendments {
+        text amendment_id PK
+        int congress
+        text amendment_type
+        int number
+        text bill_id FK
+        text chamber
+        text description
+        text purpose
+        text sponsor_bioguide_id FK
+        timestamp submitted_date
+        date latest_action_date
+        text latest_action_text
+        timestamp update_date
+        text api_url
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    amendment_findings {
+        uuid finding_id PK
+        text amendment_id FK
+        text finding_type_id FK
+        text summary
+        text details
+        vector embedding
+        text llm_model
+        timestamp analyzed_at
+    }
+
+    bill_analyses {
+        uuid analysis_id PK
+        text bill_id FK
+        int pass_completed
+        text llm_model
+        text summary
+        text topics
+        vector embedding
+        timestamp analyzed_at
+    }
+
+    finding_types {
+        text finding_type_id PK
+        text display_name
+        text description
+    }
+
+    bill_findings {
+        uuid finding_id PK
+        text bill_id FK
+        uuid analysis_id FK
+        text finding_type_id FK
+        text summary
+        text details
+        vector embedding
+        text llm_model
+        timestamp analyzed_at
+    }
+
+    users {
+        uuid user_id PK
+        text display_name
+        text email UK
+        text state
+        int district
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    user_preferences {
+        uuid preference_id PK
+        uuid user_id FK
+        text topic
+        text stance
+        int importance
+        vector embedding
+        timestamp updated_at
+    }
+
+    member_bill_stances {
+        text member_id FK
+        text bill_id FK
+        text vote_id FK
+        text position
+        text vote_type
+        timestamp vote_date
+        int congress
+        text topics
+    }
+
+    scores {
+        uuid user_id FK
+        text member_id FK
+        float aggregate_score
+        timestamp last_updated
+        text llm_model
+        int total_bills
+        int total_votes
+    }
+
+    score_topics {
+        uuid user_id FK
+        text member_id FK
+        text topic
+        float score
+    }
+
+    score_congress {
+        uuid user_id FK
+        text member_id FK
+        int congress
+        float overall_score
+        int bills_considered
+        int votes_analyzed
+    }
+
+    score_congress_topics {
+        uuid user_id FK
+        text member_id FK
+        int congress
+        text topic
+        float score
+    }
+
+    score_history {
+        uuid score_id PK
+        uuid user_id FK
+        text member_id FK
+        timestamp computed_at
+        float aggregate_score
+        text trigger_event
+    }
+
+    score_history_congress {
+        uuid score_id FK
+        int congress
+        float overall_score
+        int bills_considered
+        int votes_analyzed
+    }
+
+    score_history_congress_topics {
+        uuid score_id FK
+        int congress
+        text topic
+        float score
+    }
+
+    score_history_highlights {
+        uuid score_id FK
+        text bill_id
+        text topic
+        text stance
+        text vote
+        float alignment
+    }
+
+    pipeline_runs {
+        uuid run_id PK
+        text pipeline_name
+        text status
+        timestamp started_at
+        timestamp completed_at
+        int items_processed
+        int items_succeeded
+        int items_failed
+        jsonb error_summary
+        text snapshot_path
+        text trigger
+        timestamp created_at
+    }
+
+    processing_results {
+        uuid result_id PK
+        uuid run_id FK
+        uuid correlation_id
+        text entity_type
+        text entity_id
+        text status
+        text error_message
+        text error_class
+        timestamp processed_at
+    }
+
+    members ||--o{ member_terms : "member_id"
+    members ||--o{ member_party_history : "member_id"
+    members ||--o{ bills : "sponsor_bioguide_id"
+    bills ||--o{ bill_cosponsors : "bill_id"
+    members ||--o{ bill_cosponsors : "member_id"
+    bills ||--o{ bill_subjects : "bill_id"
+    bills ||--o{ votes : "bill_id"
+    votes ||--o{ vote_positions : "vote_id"
+    members ||--o{ vote_positions : "member_id"
+    vote_history ||--o{ vote_history_positions : "history_id"
+    bills ||--o{ amendments : "bill_id"
+    members ||--o{ amendments : "sponsor_bioguide_id"
+    amendments ||--o{ amendment_findings : "amendment_id"
+    finding_types ||--o{ amendment_findings : "finding_type_id"
+    bills ||--o{ bill_analyses : "bill_id"
+    finding_types ||--o{ bill_findings : "finding_type_id"
+    bills ||--o{ bill_findings : "bill_id"
+    bill_analyses ||--o{ bill_findings : "analysis_id"
+    users ||--o{ user_preferences : "user_id"
+    members ||--o{ member_bill_stances : "member_id"
+    bills ||--o{ member_bill_stances : "bill_id"
+    votes ||--o{ member_bill_stances : "vote_id"
+    users ||--o{ scores : "user_id"
+    members ||--o{ scores : "member_id"
+    scores ||--o{ score_topics : "user_id, member_id"
+    scores ||--o{ score_congress : "user_id, member_id"
+    score_congress ||--o{ score_congress_topics : "user_id, member_id, congress"
+    users ||--o{ score_history : "user_id"
+    members ||--o{ score_history : "member_id"
+    score_history ||--o{ score_history_congress : "score_id"
+    score_history_congress ||--o{ score_history_congress_topics : "score_id, congress"
+    score_history ||--o{ score_history_highlights : "score_id"
+    pipeline_runs ||--o{ processing_results : "run_id"
+    us_states ||--o{ users : "state_code"
+    us_states ||--o{ members : "state_name"
