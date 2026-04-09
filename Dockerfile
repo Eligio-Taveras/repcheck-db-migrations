@@ -16,14 +16,14 @@
 FROM sbtscala/scala-sbt:eclipse-temurin-21.0.2_13_1.9.9_3.4.1 AS build
 WORKDIR /app
 COPY . .
-RUN sbt "repcheckdbmigrations/stage"
+RUN sbt "app/stage"
 
 # Stage 2: Runtime on Google Distroless Java 21
 FROM gcr.io/distroless/java21-debian12
 WORKDIR /app
 
 # Copy only the staged libs — no launcher script, we invoke the JVM directly.
-COPY --from=build /app/repcheck-db-migrations/target/universal/stage/lib /app/lib
+COPY --from=build /app/app/target/universal/stage/lib /app/lib
 
 # Cloud Run Jobs expect a foreground process. We bypass the bin/ launcher script
 # (which uses bash) because Distroless has no shell. Instead we launch java

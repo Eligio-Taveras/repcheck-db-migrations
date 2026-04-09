@@ -30,9 +30,6 @@ lazy val commonSettings = Seq(
 
     envCreds.orElse(fileCreds).toSeq
   },
-  libraryDependencies ++= Seq(
-    "org.scalatest" %% "scalatest" % "3.2.18" % Test
-  ),
   semanticdbEnabled := true,
   tpolecatScalacOptions ++= ScalaCConfig.scalaCOptions,
   tpolecatScalacOptions ++= {
@@ -59,6 +56,10 @@ lazy val commonSettings = Seq(
   )
 )
 
+lazy val scalatestTest = Seq(
+  libraryDependencies += "org.scalatest" %% "scalatest" % Versions.scalatestVersion % Test
+)
+
 lazy val dockerSettings = Seq(
   dockerBaseImage := "gcr.io/distroless/java21-debian12",
   dockerExposedPorts := Seq.empty,
@@ -67,26 +68,79 @@ lazy val dockerSettings = Seq(
 )
 
 lazy val root = (project in file("."))
-  .aggregate(repcheckdbmigrations)
+  .aggregate(changesets, runner, app)
   .settings(
     commonSettings,
     name := "repcheck-db-migrations-root",
     publish / skip := true
   )
 
-lazy val repcheckdbmigrations = (project in file("repcheck-db-migrations"))
-  .enablePlugins(com.repcheck.sbt.ExceptionUniquenessPlugin, JavaAppPackaging, DockerPlugin)
+// ── changesets ────────────────────────────────────────────────────────────────
+// Resources-only JAR containing the Liquibase master changelog + SQL files.
+// No Scala code, no transitive dependencies. Consumers that want to bring up
+// Postgres in a test and apply the schema can add this JAR to their classpath
+// and point Liquibase at `classpath:db/changelog/db.changelog-master.yaml`.
+lazy val changesets = (project in file("changesets"))
+  .settings(
+    commonSettings,
+    name := "repcheck-db-migrations-changesets",
+    // Resources-only: explicitly disable Scala autocompile of empty source tree.
+    crossPaths := true,
+    autoScalaLibrary := false,
+    // No library deps — this is a pure resource JAR.
+    libraryDependencies := Seq.empty,
+    // Not a real Scala project so no need for WartRemover / tpolecat / scalafmt
+    wartremoverErrors := Seq.empty,
+    wartremoverWarnings := Seq.empty,
+    tpolecatScalacOptions := Set.empty,
+    // No tests in this subproject.
+    Test / test := {},
+    coverageEnabled := false
+  )
+
+// ── runner ────────────────────────────────────────────────────────────────────
+// The publishable Scala library: MigrationRunner, ConnectionRetry, typed
+// exceptions, and the reusable `testkit.DockerPostgresSpec` trait.
+// Depends on `changesets` so the published POM transitively pulls the
+// changelog JAR onto consumers' classpaths.
+lazy val runner = (project in file("runner"))
+  .enablePlugins(com.repcheck.sbt.ExceptionUniquenessPlugin)
+  .dependsOn(changesets)
+  .settings(
+    commonSettings,
+    scalatestTest,
+    name := "repcheck-db-migrations-runner",
+    libraryDependencies ++=
+      liquibase ++ h2 ++ catsEffect ++ doobie ++ logging ++ testDeps ++ testkitProvided,
+    exceptionUniquenessRootPackages := Seq("repcheck.db.migrations"),
+    coverageEnabled := true,
+    // DockerPostgresSpec testkit lives in src/main/scala so it can be published
+    // for downstream reuse. It is exercised transitively by MigrationRunnerSpec
+    // and is not the locus of any custom business logic, so exclude it from
+    // the coverage numerator. The coverage gate applies to the actual runner
+    // classes (MigrationRunner, ConnectionRetry, exceptions).
+    coverageExcludedFiles := ".*DockerPostgresSpec.*"
+  )
+
+// ── app ───────────────────────────────────────────────────────────────────────
+// The IOApp Cloud Run Job entry point. Produces a Docker image via
+// sbt-native-packager. NOT published to Maven — consumers pull the Docker
+// image from the container registry instead.
+lazy val app = (project in file("app"))
+  .enablePlugins(JavaAppPackaging, DockerPlugin, com.repcheck.sbt.ExceptionUniquenessPlugin)
+  .dependsOn(runner)
   .settings(
     commonSettings,
     dockerSettings,
-    name := "repcheck-db-migrations",
-    libraryDependencies ++= liquibase ++ h2 ++ catsEffect ++ doobie ++ logging ++ testDeps,
+    name := "repcheck-db-migrations-app",
     Compile / mainClass := Some("repcheck.db.migrations.MigrationApp"),
-    Docker / packageName := "repcheck/db-migrations",
+    Docker / packageName := "repcheck-db-migrations-runner",
     exceptionUniquenessRootPackages := Seq("repcheck.db.migrations"),
-    coverageEnabled := true,
-    // MigrationApp is a thin wiring entry point — all logic lives in MigrationRunner
-    // and ConnectionRetry. It is excluded from coverage because there is no testable
-    // logic beyond environment-variable reading and Cats Effect wiring.
-    coverageExcludedFiles := ".*MigrationApp.*"
+    publish / skip := true,
+    // MigrationApp is a thin wiring entry point — all logic lives in
+    // MigrationRunner and ConnectionRetry. It is excluded from coverage
+    // because there is no testable logic beyond environment-variable reading
+    // and Cats Effect wiring.
+    coverageExcludedFiles := ".*MigrationApp.*",
+    coverageEnabled := false
   )
