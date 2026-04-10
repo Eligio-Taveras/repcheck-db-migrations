@@ -120,7 +120,7 @@ lazy val runner = (project in file("runner"))
     name := "repcheck-db-migrations-runner",
     libraryDependencies ++=
       liquibase ++ h2 ++ catsEffect ++ doobie ++ logging ++ testDeps ++ testkitProvided,
-    exceptionUniquenessRootPackages := Seq("repcheck.db.migrations"),
+    exceptionUniquenessRootPackages := Seq("com.repcheck", "repcheck"),
     // NOTE: coverageEnabled is intentionally NOT set here. Turning it on in
     // default settings bakes scoverage bytecode instrumentation (with absolute
     // GHA runner paths) into the published JAR, which crashes consumers on
@@ -148,7 +148,7 @@ lazy val app = (project in file("app"))
     name := "repcheck-db-migrations-app",
     Compile / mainClass := Some("repcheck.db.migrations.MigrationApp"),
     Docker / packageName := "repcheck-db-migrations-runner",
-    exceptionUniquenessRootPackages := Seq("repcheck.db.migrations"),
+    exceptionUniquenessRootPackages := Seq("com.repcheck", "repcheck"),
     publish / skip := true,
     // MigrationApp is a thin wiring entry point — all logic lives in
     // MigrationRunner and ConnectionRetry. It is excluded from coverage
