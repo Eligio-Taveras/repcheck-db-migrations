@@ -108,3 +108,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 011-pk-standardization
+      author: repcheck
+      comment: "Standardize all PKs to id BIGSERIAL — TEXT PKs get natural_key, UUID PKs replaced, composite PKs get id + UNIQUE constraint, all FKs converted to BIGINT"
+      changes:
+        - sqlFile:
+            path: changes/011-pk-standardization.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
