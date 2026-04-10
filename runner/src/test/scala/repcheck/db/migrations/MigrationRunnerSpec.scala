@@ -77,7 +77,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         "processing_results",
         // Migration 002 — schema expansion (13 new tables)
         "bill_text_versions",
-        "lis_member_mapping",
+        "lis_members",
+        "member_lis_mapping",
         "committees",
         "committee_members",
         "bill_committee_referrals",

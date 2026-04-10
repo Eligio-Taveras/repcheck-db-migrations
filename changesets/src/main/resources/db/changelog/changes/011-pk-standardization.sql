@@ -913,34 +913,39 @@ ALTER TABLE workflow_runs DROP COLUMN workflow_run_id;
 ALTER TABLE workflow_runs ADD CONSTRAINT workflow_runs_pkey PRIMARY KEY (id);
 
 -- -----------------------------------------------------------------------
--- 6t. workflow_run_steps
+-- 6t. pipeline_runs + workflow_run_steps + processing_results
+--     These three are interleaved because:
+--     - workflow_run_steps.pipeline_run_id needs both pr.id (new) and pr.run_id (old)
+--     - processing_results.run_id needs both plr.id (new) and plr.run_id (old)
+--     So we add pipeline_runs.id first, convert all FK references while run_id still
+--     exists, then drop run_id last.
 -- -----------------------------------------------------------------------
-ALTER TABLE workflow_run_steps ADD COLUMN id BIGSERIAL;
 
--- Convert pipeline_run_id UUID -> BIGINT (nullable, references pipeline_runs)
+-- Step 1: Add the new BIGSERIAL id to pipeline_runs (old run_id UUID still present)
+ALTER TABLE pipeline_runs ADD COLUMN id BIGSERIAL;
+
+-- Step 2: Convert workflow_run_steps.pipeline_run_id UUID -> BIGINT
+--         (needs pr.id AND pr.run_id — both exist at this point)
+ALTER TABLE workflow_run_steps ADD COLUMN id BIGSERIAL;
 ALTER TABLE workflow_run_steps ADD COLUMN pipeline_run_id_new BIGINT;
 UPDATE workflow_run_steps wrs SET pipeline_run_id_new = pr.id FROM pipeline_runs pr WHERE wrs.pipeline_run_id = pr.run_id;
 ALTER TABLE workflow_run_steps DROP COLUMN pipeline_run_id;
 ALTER TABLE workflow_run_steps RENAME COLUMN pipeline_run_id_new TO pipeline_run_id;
 
--- Drop old UUID PK, promote id
+-- Drop old composite PK, promote id
 ALTER TABLE workflow_run_steps DROP CONSTRAINT workflow_run_steps_pkey;
 ALTER TABLE workflow_run_steps DROP COLUMN step_id;
 ALTER TABLE workflow_run_steps ADD CONSTRAINT workflow_run_steps_pkey PRIMARY KEY (id);
 
--- -----------------------------------------------------------------------
--- 6u. pipeline_runs
--- -----------------------------------------------------------------------
-ALTER TABLE pipeline_runs ADD COLUMN id BIGSERIAL;
-
--- Convert processing_results.run_id UUID -> BIGINT
+-- Step 3: Convert processing_results.run_id UUID -> BIGINT
+--         (needs plr.id AND plr.run_id — both still exist)
 ALTER TABLE processing_results ADD COLUMN run_id_new BIGINT;
 UPDATE processing_results pr SET run_id_new = plr.id FROM pipeline_runs plr WHERE pr.run_id = plr.run_id;
 ALTER TABLE processing_results DROP COLUMN run_id;
 ALTER TABLE processing_results RENAME COLUMN run_id_new TO run_id;
 ALTER TABLE processing_results ALTER COLUMN run_id SET NOT NULL;
 
--- Drop old UUID PK, promote id
+-- Step 4: Now safe to drop pipeline_runs.run_id — all references converted
 ALTER TABLE pipeline_runs DROP CONSTRAINT pipeline_runs_pkey;
 ALTER TABLE pipeline_runs DROP COLUMN run_id;
 ALTER TABLE pipeline_runs ADD CONSTRAINT pipeline_runs_pkey PRIMARY KEY (id);
@@ -1010,147 +1015,151 @@ ALTER TABLE member_bill_stance_topics ADD CONSTRAINT member_bill_stance_topics_p
 -- SECTION 7: Add id BIGSERIAL to composite PK tables
 -- ===========================================================================
 
+-- NOTE: Many composite PK tables had a column dropped/re-added during the FK conversion
+-- in section 4. Dropping a column that is part of a composite PK implicitly destroys
+-- the PK constraint, so we use DROP CONSTRAINT IF EXISTS throughout.
+
 -- 7a. bill_cosponsors (bill_id BIGINT, member_id BIGINT)
 ALTER TABLE bill_cosponsors ADD COLUMN id BIGSERIAL;
-ALTER TABLE bill_cosponsors DROP CONSTRAINT bill_cosponsors_pkey;
+ALTER TABLE bill_cosponsors DROP CONSTRAINT IF EXISTS bill_cosponsors_pkey;
 ALTER TABLE bill_cosponsors ADD CONSTRAINT bill_cosponsors_pkey PRIMARY KEY (id);
 ALTER TABLE bill_cosponsors ADD CONSTRAINT uq_bill_cosponsors UNIQUE (bill_id, member_id);
 
 -- 7b. bill_subjects (bill_id BIGINT, subject_name TEXT)
 ALTER TABLE bill_subjects ADD COLUMN id BIGSERIAL;
-ALTER TABLE bill_subjects DROP CONSTRAINT bill_subjects_pkey;
+ALTER TABLE bill_subjects DROP CONSTRAINT IF EXISTS bill_subjects_pkey;
 ALTER TABLE bill_subjects ADD CONSTRAINT bill_subjects_pkey PRIMARY KEY (id);
 ALTER TABLE bill_subjects ADD CONSTRAINT uq_bill_subjects UNIQUE (bill_id, subject_name);
 
 -- 7c. vote_positions (vote_id BIGINT, member_id BIGINT)
 ALTER TABLE vote_positions ADD COLUMN id BIGSERIAL;
-ALTER TABLE vote_positions DROP CONSTRAINT vote_positions_pkey;
+ALTER TABLE vote_positions DROP CONSTRAINT IF EXISTS vote_positions_pkey;
 ALTER TABLE vote_positions ADD CONSTRAINT vote_positions_pkey PRIMARY KEY (id);
 ALTER TABLE vote_positions ADD CONSTRAINT uq_vote_positions UNIQUE (vote_id, member_id);
 
 -- 7d. vote_history_positions (history_id BIGINT, member_id BIGINT) -- no FKs
 ALTER TABLE vote_history_positions ADD COLUMN id BIGSERIAL;
-ALTER TABLE vote_history_positions DROP CONSTRAINT vote_history_positions_pkey;
+ALTER TABLE vote_history_positions DROP CONSTRAINT IF EXISTS vote_history_positions_pkey;
 ALTER TABLE vote_history_positions ADD CONSTRAINT vote_history_positions_pkey PRIMARY KEY (id);
 ALTER TABLE vote_history_positions ADD CONSTRAINT uq_vote_history_positions UNIQUE (history_id, member_id);
 
 -- 7e. member_term_history (history_id BIGINT, member_id BIGINT, chamber TEXT, start_year INT)
 ALTER TABLE member_term_history ADD COLUMN id BIGSERIAL;
-ALTER TABLE member_term_history DROP CONSTRAINT member_term_history_pkey;
+ALTER TABLE member_term_history DROP CONSTRAINT IF EXISTS member_term_history_pkey;
 ALTER TABLE member_term_history ADD CONSTRAINT member_term_history_pkey PRIMARY KEY (id);
 ALTER TABLE member_term_history ADD CONSTRAINT uq_member_term_history UNIQUE (history_id, member_id, chamber, start_year);
 
 -- 7f. bill_cosponsor_history (history_id BIGINT, bill_id BIGINT, member_id BIGINT)
 ALTER TABLE bill_cosponsor_history ADD COLUMN id BIGSERIAL;
-ALTER TABLE bill_cosponsor_history DROP CONSTRAINT bill_cosponsor_history_pkey;
+ALTER TABLE bill_cosponsor_history DROP CONSTRAINT IF EXISTS bill_cosponsor_history_pkey;
 ALTER TABLE bill_cosponsor_history ADD CONSTRAINT bill_cosponsor_history_pkey PRIMARY KEY (id);
 ALTER TABLE bill_cosponsor_history ADD CONSTRAINT uq_bill_cosponsor_history UNIQUE (history_id, bill_id, member_id);
 
 -- 7g. bill_subject_history (history_id BIGINT, bill_id BIGINT, subject_name TEXT)
 ALTER TABLE bill_subject_history ADD COLUMN id BIGSERIAL;
-ALTER TABLE bill_subject_history DROP CONSTRAINT bill_subject_history_pkey;
+ALTER TABLE bill_subject_history DROP CONSTRAINT IF EXISTS bill_subject_history_pkey;
 ALTER TABLE bill_subject_history ADD CONSTRAINT bill_subject_history_pkey PRIMARY KEY (id);
 ALTER TABLE bill_subject_history ADD CONSTRAINT uq_bill_subject_history UNIQUE (history_id, bill_id, subject_name);
 
 -- 7h. bill_concept_group_sections (concept_group_id BIGINT, section_id BIGINT)
 ALTER TABLE bill_concept_group_sections ADD COLUMN id BIGSERIAL;
-ALTER TABLE bill_concept_group_sections DROP CONSTRAINT bill_concept_group_sections_pkey;
+ALTER TABLE bill_concept_group_sections DROP CONSTRAINT IF EXISTS bill_concept_group_sections_pkey;
 ALTER TABLE bill_concept_group_sections ADD CONSTRAINT bill_concept_group_sections_pkey PRIMARY KEY (id);
 ALTER TABLE bill_concept_group_sections ADD CONSTRAINT uq_bill_concept_group_sections UNIQUE (concept_group_id, section_id);
 
 -- 7i. committee_members (committee_id BIGINT, member_id BIGINT)
 ALTER TABLE committee_members ADD COLUMN id BIGSERIAL;
-ALTER TABLE committee_members DROP CONSTRAINT committee_members_pkey;
+ALTER TABLE committee_members DROP CONSTRAINT IF EXISTS committee_members_pkey;
 ALTER TABLE committee_members ADD CONSTRAINT committee_members_pkey PRIMARY KEY (id);
 ALTER TABLE committee_members ADD CONSTRAINT uq_committee_members UNIQUE (committee_id, member_id);
 
 -- 7j. bill_committee_referrals (bill_id BIGINT, committee_id BIGINT)
 ALTER TABLE bill_committee_referrals ADD COLUMN id BIGSERIAL;
-ALTER TABLE bill_committee_referrals DROP CONSTRAINT bill_committee_referrals_pkey;
+ALTER TABLE bill_committee_referrals DROP CONSTRAINT IF EXISTS bill_committee_referrals_pkey;
 ALTER TABLE bill_committee_referrals ADD CONSTRAINT bill_committee_referrals_pkey PRIMARY KEY (id);
 ALTER TABLE bill_committee_referrals ADD CONSTRAINT uq_bill_committee_referrals UNIQUE (bill_id, committee_id);
 
 -- 7k. qa_question_topics (question_id BIGINT, topic TEXT)
 ALTER TABLE qa_question_topics ADD COLUMN id BIGSERIAL;
-ALTER TABLE qa_question_topics DROP CONSTRAINT qa_question_topics_pkey;
+ALTER TABLE qa_question_topics DROP CONSTRAINT IF EXISTS qa_question_topics_pkey;
 ALTER TABLE qa_question_topics ADD CONSTRAINT qa_question_topics_pkey PRIMARY KEY (id);
 ALTER TABLE qa_question_topics ADD CONSTRAINT uq_qa_question_topics UNIQUE (question_id, topic);
 
 -- 7l. qa_answer_options (question_id BIGINT, option_value TEXT)
 ALTER TABLE qa_answer_options ADD COLUMN id BIGSERIAL;
-ALTER TABLE qa_answer_options DROP CONSTRAINT qa_answer_options_pkey;
+ALTER TABLE qa_answer_options DROP CONSTRAINT IF EXISTS qa_answer_options_pkey;
 ALTER TABLE qa_answer_options ADD CONSTRAINT qa_answer_options_pkey PRIMARY KEY (id);
 ALTER TABLE qa_answer_options ADD CONSTRAINT uq_qa_answer_options UNIQUE (question_id, option_value);
 
 -- 7m. scores (user_id UUID, member_id BIGINT)
 ALTER TABLE scores ADD COLUMN id BIGSERIAL;
-ALTER TABLE scores DROP CONSTRAINT scores_pkey;
+ALTER TABLE scores DROP CONSTRAINT IF EXISTS scores_pkey;
 ALTER TABLE scores ADD CONSTRAINT scores_pkey PRIMARY KEY (id);
 ALTER TABLE scores ADD CONSTRAINT uq_scores UNIQUE (user_id, member_id);
 
 -- 7n. score_topics (user_id UUID, member_id BIGINT, topic TEXT)
 ALTER TABLE score_topics ADD COLUMN id BIGSERIAL;
-ALTER TABLE score_topics DROP CONSTRAINT score_topics_pkey;
+ALTER TABLE score_topics DROP CONSTRAINT IF EXISTS score_topics_pkey;
 ALTER TABLE score_topics ADD CONSTRAINT score_topics_pkey PRIMARY KEY (id);
 ALTER TABLE score_topics ADD CONSTRAINT uq_score_topics UNIQUE (user_id, member_id, topic);
 
 -- 7o. score_congress (user_id UUID, member_id BIGINT, congress INT)
 ALTER TABLE score_congress ADD COLUMN id BIGSERIAL;
-ALTER TABLE score_congress DROP CONSTRAINT score_congress_pkey;
+ALTER TABLE score_congress DROP CONSTRAINT IF EXISTS score_congress_pkey;
 ALTER TABLE score_congress ADD CONSTRAINT score_congress_pkey PRIMARY KEY (id);
 ALTER TABLE score_congress ADD CONSTRAINT uq_score_congress UNIQUE (user_id, member_id, congress);
 
 -- 7p. score_congress_topics (user_id UUID, member_id BIGINT, congress INT, topic TEXT)
 ALTER TABLE score_congress_topics ADD COLUMN id BIGSERIAL;
-ALTER TABLE score_congress_topics DROP CONSTRAINT score_congress_topics_pkey;
+ALTER TABLE score_congress_topics DROP CONSTRAINT IF EXISTS score_congress_topics_pkey;
 ALTER TABLE score_congress_topics ADD CONSTRAINT score_congress_topics_pkey PRIMARY KEY (id);
 ALTER TABLE score_congress_topics ADD CONSTRAINT uq_score_congress_topics UNIQUE (user_id, member_id, congress, topic);
 
 -- 7q. score_history_congress (score_id BIGINT, congress INT)
 ALTER TABLE score_history_congress ADD COLUMN id BIGSERIAL;
-ALTER TABLE score_history_congress DROP CONSTRAINT score_history_congress_pkey;
+ALTER TABLE score_history_congress DROP CONSTRAINT IF EXISTS score_history_congress_pkey;
 ALTER TABLE score_history_congress ADD CONSTRAINT score_history_congress_pkey PRIMARY KEY (id);
 ALTER TABLE score_history_congress ADD CONSTRAINT uq_score_history_congress UNIQUE (score_id, congress);
 
 -- 7r. score_history_congress_topics (score_id BIGINT, congress INT, topic TEXT)
 ALTER TABLE score_history_congress_topics ADD COLUMN id BIGSERIAL;
-ALTER TABLE score_history_congress_topics DROP CONSTRAINT score_history_congress_topics_pkey;
+ALTER TABLE score_history_congress_topics DROP CONSTRAINT IF EXISTS score_history_congress_topics_pkey;
 ALTER TABLE score_history_congress_topics ADD CONSTRAINT score_history_congress_topics_pkey PRIMARY KEY (id);
 ALTER TABLE score_history_congress_topics ADD CONSTRAINT uq_score_history_congress_topics UNIQUE (score_id, congress, topic);
 
 -- 7s. score_history_highlights (score_id BIGINT, bill_id BIGINT, topic TEXT)
 ALTER TABLE score_history_highlights ADD COLUMN id BIGSERIAL;
-ALTER TABLE score_history_highlights DROP CONSTRAINT score_history_highlights_pkey;
+ALTER TABLE score_history_highlights DROP CONSTRAINT IF EXISTS score_history_highlights_pkey;
 ALTER TABLE score_history_highlights ADD CONSTRAINT score_history_highlights_pkey PRIMARY KEY (id);
 ALTER TABLE score_history_highlights ADD CONSTRAINT uq_score_history_highlights UNIQUE (score_id, bill_id, topic);
 
 -- 7t. member_bill_stances (member_id BIGINT, bill_id BIGINT, vote_id BIGINT)
 ALTER TABLE member_bill_stances ADD COLUMN id BIGSERIAL;
-ALTER TABLE member_bill_stances DROP CONSTRAINT member_bill_stances_pkey;
+ALTER TABLE member_bill_stances DROP CONSTRAINT IF EXISTS member_bill_stances_pkey;
 ALTER TABLE member_bill_stances ADD CONSTRAINT member_bill_stances_pkey PRIMARY KEY (id);
 ALTER TABLE member_bill_stances ADD CONSTRAINT uq_member_bill_stances UNIQUE (member_id, bill_id, vote_id);
 
 -- 7u. user_legislator_pairings (user_id UUID, member_id BIGINT)
 ALTER TABLE user_legislator_pairings ADD COLUMN id BIGSERIAL;
-ALTER TABLE user_legislator_pairings DROP CONSTRAINT user_legislator_pairings_pkey;
+ALTER TABLE user_legislator_pairings DROP CONSTRAINT IF EXISTS user_legislator_pairings_pkey;
 ALTER TABLE user_legislator_pairings ADD CONSTRAINT user_legislator_pairings_pkey PRIMARY KEY (id);
 ALTER TABLE user_legislator_pairings ADD CONSTRAINT uq_user_legislator_pairings UNIQUE (user_id, member_id);
 
 -- 7v. user_bill_alignments (user_id UUID, bill_id BIGINT, topic TEXT)
 ALTER TABLE user_bill_alignments ADD COLUMN id BIGSERIAL;
-ALTER TABLE user_bill_alignments DROP CONSTRAINT user_bill_alignments_pkey;
+ALTER TABLE user_bill_alignments DROP CONSTRAINT IF EXISTS user_bill_alignments_pkey;
 ALTER TABLE user_bill_alignments ADD CONSTRAINT user_bill_alignments_pkey PRIMARY KEY (id);
 ALTER TABLE user_bill_alignments ADD CONSTRAINT uq_user_bill_alignments UNIQUE (user_id, bill_id, topic);
 
 -- 7w. user_amendment_alignments (user_id UUID, amendment_id BIGINT, topic TEXT)
 ALTER TABLE user_amendment_alignments ADD COLUMN id BIGSERIAL;
-ALTER TABLE user_amendment_alignments DROP CONSTRAINT user_amendment_alignments_pkey;
+ALTER TABLE user_amendment_alignments DROP CONSTRAINT IF EXISTS user_amendment_alignments_pkey;
 ALTER TABLE user_amendment_alignments ADD CONSTRAINT user_amendment_alignments_pkey PRIMARY KEY (id);
 ALTER TABLE user_amendment_alignments ADD CONSTRAINT uq_user_amendment_alignments UNIQUE (user_id, amendment_id, topic);
 
 -- 7x. stance_materialization_status (bill_id BIGINT) -- already BIGINT, just add id
 ALTER TABLE stance_materialization_status ADD COLUMN id BIGSERIAL;
-ALTER TABLE stance_materialization_status DROP CONSTRAINT stance_materialization_status_pkey;
+ALTER TABLE stance_materialization_status DROP CONSTRAINT IF EXISTS stance_materialization_status_pkey;
 ALTER TABLE stance_materialization_status ADD CONSTRAINT stance_materialization_status_pkey PRIMARY KEY (id);
 ALTER TABLE stance_materialization_status ADD CONSTRAINT uq_stance_materialization_status UNIQUE (bill_id);
 
@@ -1479,64 +1488,64 @@ DROP INDEX IF EXISTS idx_lis_mapping_member;
 -- ===========================================================================
 -- After bulk data migration, sequences may be behind the max id value.
 
-SELECT setval(pg_get_serial_sequence('lis_members', 'id'), COALESCE(MAX(id), 0)) FROM lis_members;
-SELECT setval(pg_get_serial_sequence('members', 'id'), COALESCE(MAX(id), 0)) FROM members;
-SELECT setval(pg_get_serial_sequence('votes', 'id'), COALESCE(MAX(id), 0)) FROM votes;
-SELECT setval(pg_get_serial_sequence('amendments', 'id'), COALESCE(MAX(id), 0)) FROM amendments;
-SELECT setval(pg_get_serial_sequence('committees', 'id'), COALESCE(MAX(id), 0)) FROM committees;
-SELECT setval(pg_get_serial_sequence('qa_questions', 'id'), COALESCE(MAX(id), 0)) FROM qa_questions;
-SELECT setval(pg_get_serial_sequence('finding_types', 'id'), COALESCE(MAX(id), 0)) FROM finding_types;
-SELECT setval(pg_get_serial_sequence('bill_text_versions', 'id'), COALESCE(MAX(id), 0)) FROM bill_text_versions;
-SELECT setval(pg_get_serial_sequence('bill_text_sections', 'id'), COALESCE(MAX(id), 0)) FROM bill_text_sections;
-SELECT setval(pg_get_serial_sequence('bill_concept_groups', 'id'), COALESCE(MAX(id), 0)) FROM bill_concept_groups;
-SELECT setval(pg_get_serial_sequence('bill_analyses', 'id'), COALESCE(MAX(id), 0)) FROM bill_analyses;
-SELECT setval(pg_get_serial_sequence('bill_findings', 'id'), COALESCE(MAX(id), 0)) FROM bill_findings;
-SELECT setval(pg_get_serial_sequence('bill_concept_summaries', 'id'), COALESCE(MAX(id), 0)) FROM bill_concept_summaries;
-SELECT setval(pg_get_serial_sequence('bill_analysis_topics', 'id'), COALESCE(MAX(id), 0)) FROM bill_analysis_topics;
-SELECT setval(pg_get_serial_sequence('bill_fiscal_estimates', 'id'), COALESCE(MAX(id), 0)) FROM bill_fiscal_estimates;
-SELECT setval(pg_get_serial_sequence('amendment_findings', 'id'), COALESCE(MAX(id), 0)) FROM amendment_findings;
-SELECT setval(pg_get_serial_sequence('amendment_analyses', 'id'), COALESCE(MAX(id), 0)) FROM amendment_analyses;
-SELECT setval(pg_get_serial_sequence('amendment_concept_summaries', 'id'), COALESCE(MAX(id), 0)) FROM amendment_concept_summaries;
-SELECT setval(pg_get_serial_sequence('amendment_analysis_topics', 'id'), COALESCE(MAX(id), 0)) FROM amendment_analysis_topics;
-SELECT setval(pg_get_serial_sequence('amendment_text_versions', 'id'), COALESCE(MAX(id), 0)) FROM amendment_text_versions;
-SELECT setval(pg_get_serial_sequence('vote_history', 'id'), COALESCE(MAX(id), 0)) FROM vote_history;
-SELECT setval(pg_get_serial_sequence('member_history', 'id'), COALESCE(MAX(id), 0)) FROM member_history;
-SELECT setval(pg_get_serial_sequence('bill_history', 'id'), COALESCE(MAX(id), 0)) FROM bill_history;
-SELECT setval(pg_get_serial_sequence('member_terms', 'id'), COALESCE(MAX(id), 0)) FROM member_terms;
-SELECT setval(pg_get_serial_sequence('member_party_history', 'id'), COALESCE(MAX(id), 0)) FROM member_party_history;
-SELECT setval(pg_get_serial_sequence('workflow_runs', 'id'), COALESCE(MAX(id), 0)) FROM workflow_runs;
-SELECT setval(pg_get_serial_sequence('workflow_run_steps', 'id'), COALESCE(MAX(id), 0)) FROM workflow_run_steps;
-SELECT setval(pg_get_serial_sequence('pipeline_runs', 'id'), COALESCE(MAX(id), 0)) FROM pipeline_runs;
-SELECT setval(pg_get_serial_sequence('processing_results', 'id'), COALESCE(MAX(id), 0)) FROM processing_results;
-SELECT setval(pg_get_serial_sequence('user_preferences', 'id'), COALESCE(MAX(id), 0)) FROM user_preferences;
-SELECT setval(pg_get_serial_sequence('score_history', 'id'), COALESCE(MAX(id), 0)) FROM score_history;
-SELECT setval(pg_get_serial_sequence('qa_user_responses', 'id'), COALESCE(MAX(id), 0)) FROM qa_user_responses;
-SELECT setval(pg_get_serial_sequence('member_bill_stance_topics', 'id'), COALESCE(MAX(id), 0)) FROM member_bill_stance_topics;
-SELECT setval(pg_get_serial_sequence('bill_cosponsors', 'id'), COALESCE(MAX(id), 0)) FROM bill_cosponsors;
-SELECT setval(pg_get_serial_sequence('bill_subjects', 'id'), COALESCE(MAX(id), 0)) FROM bill_subjects;
-SELECT setval(pg_get_serial_sequence('vote_positions', 'id'), COALESCE(MAX(id), 0)) FROM vote_positions;
-SELECT setval(pg_get_serial_sequence('vote_history_positions', 'id'), COALESCE(MAX(id), 0)) FROM vote_history_positions;
-SELECT setval(pg_get_serial_sequence('member_term_history', 'id'), COALESCE(MAX(id), 0)) FROM member_term_history;
-SELECT setval(pg_get_serial_sequence('bill_cosponsor_history', 'id'), COALESCE(MAX(id), 0)) FROM bill_cosponsor_history;
-SELECT setval(pg_get_serial_sequence('bill_subject_history', 'id'), COALESCE(MAX(id), 0)) FROM bill_subject_history;
-SELECT setval(pg_get_serial_sequence('bill_concept_group_sections', 'id'), COALESCE(MAX(id), 0)) FROM bill_concept_group_sections;
-SELECT setval(pg_get_serial_sequence('committee_members', 'id'), COALESCE(MAX(id), 0)) FROM committee_members;
-SELECT setval(pg_get_serial_sequence('bill_committee_referrals', 'id'), COALESCE(MAX(id), 0)) FROM bill_committee_referrals;
-SELECT setval(pg_get_serial_sequence('qa_question_topics', 'id'), COALESCE(MAX(id), 0)) FROM qa_question_topics;
-SELECT setval(pg_get_serial_sequence('qa_answer_options', 'id'), COALESCE(MAX(id), 0)) FROM qa_answer_options;
-SELECT setval(pg_get_serial_sequence('scores', 'id'), COALESCE(MAX(id), 0)) FROM scores;
-SELECT setval(pg_get_serial_sequence('score_topics', 'id'), COALESCE(MAX(id), 0)) FROM score_topics;
-SELECT setval(pg_get_serial_sequence('score_congress', 'id'), COALESCE(MAX(id), 0)) FROM score_congress;
-SELECT setval(pg_get_serial_sequence('score_congress_topics', 'id'), COALESCE(MAX(id), 0)) FROM score_congress_topics;
-SELECT setval(pg_get_serial_sequence('score_history_congress', 'id'), COALESCE(MAX(id), 0)) FROM score_history_congress;
-SELECT setval(pg_get_serial_sequence('score_history_congress_topics', 'id'), COALESCE(MAX(id), 0)) FROM score_history_congress_topics;
-SELECT setval(pg_get_serial_sequence('score_history_highlights', 'id'), COALESCE(MAX(id), 0)) FROM score_history_highlights;
-SELECT setval(pg_get_serial_sequence('member_bill_stances', 'id'), COALESCE(MAX(id), 0)) FROM member_bill_stances;
-SELECT setval(pg_get_serial_sequence('user_legislator_pairings', 'id'), COALESCE(MAX(id), 0)) FROM user_legislator_pairings;
-SELECT setval(pg_get_serial_sequence('user_bill_alignments', 'id'), COALESCE(MAX(id), 0)) FROM user_bill_alignments;
-SELECT setval(pg_get_serial_sequence('user_amendment_alignments', 'id'), COALESCE(MAX(id), 0)) FROM user_amendment_alignments;
-SELECT setval(pg_get_serial_sequence('stance_materialization_status', 'id'), COALESCE(MAX(id), 0)) FROM stance_materialization_status;
-SELECT setval(pg_get_serial_sequence('member_lis_mapping', 'id'), COALESCE(MAX(id), 0)) FROM member_lis_mapping;
+SELECT setval(pg_get_serial_sequence('lis_members', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM lis_members;
+SELECT setval(pg_get_serial_sequence('members', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM members;
+SELECT setval(pg_get_serial_sequence('votes', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM votes;
+SELECT setval(pg_get_serial_sequence('amendments', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM amendments;
+SELECT setval(pg_get_serial_sequence('committees', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM committees;
+SELECT setval(pg_get_serial_sequence('qa_questions', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM qa_questions;
+SELECT setval(pg_get_serial_sequence('finding_types', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM finding_types;
+SELECT setval(pg_get_serial_sequence('bill_text_versions', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_text_versions;
+SELECT setval(pg_get_serial_sequence('bill_text_sections', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_text_sections;
+SELECT setval(pg_get_serial_sequence('bill_concept_groups', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_concept_groups;
+SELECT setval(pg_get_serial_sequence('bill_analyses', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_analyses;
+SELECT setval(pg_get_serial_sequence('bill_findings', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_findings;
+SELECT setval(pg_get_serial_sequence('bill_concept_summaries', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_concept_summaries;
+SELECT setval(pg_get_serial_sequence('bill_analysis_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_analysis_topics;
+SELECT setval(pg_get_serial_sequence('bill_fiscal_estimates', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_fiscal_estimates;
+SELECT setval(pg_get_serial_sequence('amendment_findings', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM amendment_findings;
+SELECT setval(pg_get_serial_sequence('amendment_analyses', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM amendment_analyses;
+SELECT setval(pg_get_serial_sequence('amendment_concept_summaries', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM amendment_concept_summaries;
+SELECT setval(pg_get_serial_sequence('amendment_analysis_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM amendment_analysis_topics;
+SELECT setval(pg_get_serial_sequence('amendment_text_versions', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM amendment_text_versions;
+SELECT setval(pg_get_serial_sequence('vote_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM vote_history;
+SELECT setval(pg_get_serial_sequence('member_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_history;
+SELECT setval(pg_get_serial_sequence('bill_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_history;
+SELECT setval(pg_get_serial_sequence('member_terms', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_terms;
+SELECT setval(pg_get_serial_sequence('member_party_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_party_history;
+SELECT setval(pg_get_serial_sequence('workflow_runs', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM workflow_runs;
+SELECT setval(pg_get_serial_sequence('workflow_run_steps', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM workflow_run_steps;
+SELECT setval(pg_get_serial_sequence('pipeline_runs', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM pipeline_runs;
+SELECT setval(pg_get_serial_sequence('processing_results', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM processing_results;
+SELECT setval(pg_get_serial_sequence('user_preferences', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM user_preferences;
+SELECT setval(pg_get_serial_sequence('score_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_history;
+SELECT setval(pg_get_serial_sequence('qa_user_responses', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM qa_user_responses;
+SELECT setval(pg_get_serial_sequence('member_bill_stance_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_bill_stance_topics;
+SELECT setval(pg_get_serial_sequence('bill_cosponsors', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_cosponsors;
+SELECT setval(pg_get_serial_sequence('bill_subjects', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_subjects;
+SELECT setval(pg_get_serial_sequence('vote_positions', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM vote_positions;
+SELECT setval(pg_get_serial_sequence('vote_history_positions', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM vote_history_positions;
+SELECT setval(pg_get_serial_sequence('member_term_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_term_history;
+SELECT setval(pg_get_serial_sequence('bill_cosponsor_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_cosponsor_history;
+SELECT setval(pg_get_serial_sequence('bill_subject_history', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_subject_history;
+SELECT setval(pg_get_serial_sequence('bill_concept_group_sections', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_concept_group_sections;
+SELECT setval(pg_get_serial_sequence('committee_members', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM committee_members;
+SELECT setval(pg_get_serial_sequence('bill_committee_referrals', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM bill_committee_referrals;
+SELECT setval(pg_get_serial_sequence('qa_question_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM qa_question_topics;
+SELECT setval(pg_get_serial_sequence('qa_answer_options', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM qa_answer_options;
+SELECT setval(pg_get_serial_sequence('scores', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM scores;
+SELECT setval(pg_get_serial_sequence('score_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_topics;
+SELECT setval(pg_get_serial_sequence('score_congress', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_congress;
+SELECT setval(pg_get_serial_sequence('score_congress_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_congress_topics;
+SELECT setval(pg_get_serial_sequence('score_history_congress', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_history_congress;
+SELECT setval(pg_get_serial_sequence('score_history_congress_topics', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_history_congress_topics;
+SELECT setval(pg_get_serial_sequence('score_history_highlights', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM score_history_highlights;
+SELECT setval(pg_get_serial_sequence('member_bill_stances', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_bill_stances;
+SELECT setval(pg_get_serial_sequence('user_legislator_pairings', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM user_legislator_pairings;
+SELECT setval(pg_get_serial_sequence('user_bill_alignments', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM user_bill_alignments;
+SELECT setval(pg_get_serial_sequence('user_amendment_alignments', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM user_amendment_alignments;
+SELECT setval(pg_get_serial_sequence('stance_materialization_status', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM stance_materialization_status;
+SELECT setval(pg_get_serial_sequence('member_lis_mapping', 'id'), GREATEST(COALESCE(MAX(id), 1), 1)) FROM member_lis_mapping;
 
 -- ===========================================================================
 -- SECTION 11: Rebuild indexes that were dropped with old columns
@@ -1545,157 +1554,157 @@ SELECT setval(pg_get_serial_sequence('member_lis_mapping', 'id'), COALESCE(MAX(i
 -- Recreate essential indexes on the new column names/types.
 
 -- members indexes
-CREATE INDEX idx_members_state ON members (state);
-CREATE INDEX idx_members_state_district ON members (state, district);
-CREATE INDEX idx_members_current_party ON members (current_party);
+CREATE INDEX IF NOT EXISTS idx_members_state ON members (state);
+CREATE INDEX IF NOT EXISTS idx_members_state_district ON members (state, district);
+CREATE INDEX IF NOT EXISTS idx_members_current_party ON members (current_party);
 
 -- bills indexes (sponsor renamed)
 DROP INDEX IF EXISTS idx_bills_sponsor;
-CREATE INDEX idx_bills_sponsor ON bills (sponsor_member_id);
+CREATE INDEX IF NOT EXISTS idx_bills_sponsor ON bills (sponsor_member_id);
 
 -- votes indexes
-CREATE INDEX idx_votes_bill_id ON votes (bill_id);
-CREATE INDEX idx_votes_congress ON votes (congress);
-CREATE INDEX idx_votes_date ON votes (vote_date);
-CREATE INDEX idx_votes_amendment_id ON votes (amendment_id) WHERE amendment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_votes_bill_id ON votes (bill_id);
+CREATE INDEX IF NOT EXISTS idx_votes_congress ON votes (congress);
+CREATE INDEX IF NOT EXISTS idx_votes_date ON votes (vote_date);
+CREATE INDEX IF NOT EXISTS idx_votes_amendment_id ON votes (amendment_id) WHERE amendment_id IS NOT NULL;
 
 -- vote_positions indexes
-CREATE INDEX idx_vote_positions_member ON vote_positions (member_id);
+CREATE INDEX IF NOT EXISTS idx_vote_positions_member ON vote_positions (member_id);
 
 -- vote_history indexes
-CREATE INDEX idx_vote_history_vote_id ON vote_history (vote_id);
+CREATE INDEX IF NOT EXISTS idx_vote_history_vote_id ON vote_history (vote_id);
 
 -- amendments indexes
 DROP INDEX IF EXISTS idx_amendments_sponsor;
-CREATE INDEX idx_amendments_sponsor ON amendments (sponsor_member_id);
-CREATE INDEX idx_amendments_bill_id ON amendments (bill_id);
-CREATE INDEX idx_amendments_congress ON amendments (congress);
+CREATE INDEX IF NOT EXISTS idx_amendments_sponsor ON amendments (sponsor_member_id);
+CREATE INDEX IF NOT EXISTS idx_amendments_bill_id ON amendments (bill_id);
+CREATE INDEX IF NOT EXISTS idx_amendments_congress ON amendments (congress);
 
 -- amendment_findings indexes
-CREATE INDEX idx_amendment_findings_amendment ON amendment_findings (amendment_id);
-CREATE INDEX idx_amendment_findings_type ON amendment_findings (finding_type_id);
-CREATE INDEX idx_amendment_findings_analysis ON amendment_findings (analysis_id) WHERE analysis_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_amendment_findings_amendment ON amendment_findings (amendment_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_findings_type ON amendment_findings (finding_type_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_findings_analysis ON amendment_findings (analysis_id) WHERE analysis_id IS NOT NULL;
 
 -- amendment_analyses indexes
-CREATE INDEX idx_amendment_analyses_amendment ON amendment_analyses (amendment_id);
-CREATE INDEX idx_amendment_analyses_bill ON amendment_analyses (bill_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_analyses_amendment ON amendment_analyses (amendment_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_analyses_bill ON amendment_analyses (bill_id);
 
 -- amendment_concept_summaries indexes
-CREATE INDEX idx_amendment_concept_summaries_analysis ON amendment_concept_summaries (analysis_id);
-CREATE INDEX idx_amendment_concept_summaries_amendment ON amendment_concept_summaries (amendment_id);
-CREATE INDEX idx_amendment_concept_summaries_bill ON amendment_concept_summaries (bill_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_concept_summaries_analysis ON amendment_concept_summaries (analysis_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_concept_summaries_amendment ON amendment_concept_summaries (amendment_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_concept_summaries_bill ON amendment_concept_summaries (bill_id);
 
 -- amendment_analysis_topics indexes
-CREATE INDEX idx_amendment_analysis_topics_analysis ON amendment_analysis_topics (analysis_id);
-CREATE INDEX idx_amendment_analysis_topics_amendment ON amendment_analysis_topics (amendment_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_analysis_topics_analysis ON amendment_analysis_topics (analysis_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_analysis_topics_amendment ON amendment_analysis_topics (amendment_id);
 
 -- amendment_text_versions indexes
-CREATE INDEX idx_amendment_text_versions_amendment ON amendment_text_versions (amendment_id);
+CREATE INDEX IF NOT EXISTS idx_amendment_text_versions_amendment ON amendment_text_versions (amendment_id);
 
 -- bill_text_versions indexes
-CREATE INDEX idx_bill_text_versions_bill ON bill_text_versions (bill_id);
+CREATE INDEX IF NOT EXISTS idx_bill_text_versions_bill ON bill_text_versions (bill_id);
 
 -- bill_text_sections indexes
-CREATE INDEX idx_text_sections_version ON bill_text_sections (version_id);
-CREATE INDEX idx_text_sections_bill ON bill_text_sections (bill_id);
+CREATE INDEX IF NOT EXISTS idx_text_sections_version ON bill_text_sections (version_id);
+CREATE INDEX IF NOT EXISTS idx_text_sections_bill ON bill_text_sections (bill_id);
 
 -- bill_concept_groups indexes
-CREATE INDEX idx_concept_groups_version ON bill_concept_groups (version_id);
-CREATE INDEX idx_concept_groups_bill ON bill_concept_groups (bill_id);
+CREATE INDEX IF NOT EXISTS idx_concept_groups_version ON bill_concept_groups (version_id);
+CREATE INDEX IF NOT EXISTS idx_concept_groups_bill ON bill_concept_groups (bill_id);
 
 -- bill_concept_group_sections indexes
-CREATE INDEX idx_cg_sections_section ON bill_concept_group_sections (section_id);
+CREATE INDEX IF NOT EXISTS idx_cg_sections_section ON bill_concept_group_sections (section_id);
 
 -- bill_analyses indexes
-CREATE INDEX idx_bill_analyses_bill_id ON bill_analyses (bill_id);
+CREATE INDEX IF NOT EXISTS idx_bill_analyses_bill_id ON bill_analyses (bill_id);
 
 -- bill_findings indexes
-CREATE INDEX idx_bill_findings_bill ON bill_findings (bill_id);
-CREATE INDEX idx_bill_findings_analysis ON bill_findings (analysis_id);
-CREATE INDEX idx_bill_findings_type ON bill_findings (finding_type_id);
+CREATE INDEX IF NOT EXISTS idx_bill_findings_bill ON bill_findings (bill_id);
+CREATE INDEX IF NOT EXISTS idx_bill_findings_analysis ON bill_findings (analysis_id);
+CREATE INDEX IF NOT EXISTS idx_bill_findings_type ON bill_findings (finding_type_id);
 
 -- bill_concept_summaries indexes
-CREATE INDEX idx_concept_summaries_analysis ON bill_concept_summaries (analysis_id);
-CREATE INDEX idx_concept_summaries_bill ON bill_concept_summaries (bill_id);
-CREATE INDEX idx_concept_summaries_group ON bill_concept_summaries (concept_group_id);
+CREATE INDEX IF NOT EXISTS idx_concept_summaries_analysis ON bill_concept_summaries (analysis_id);
+CREATE INDEX IF NOT EXISTS idx_concept_summaries_bill ON bill_concept_summaries (bill_id);
+CREATE INDEX IF NOT EXISTS idx_concept_summaries_group ON bill_concept_summaries (concept_group_id);
 
 -- bill_analysis_topics indexes
-CREATE INDEX idx_analysis_topics_analysis ON bill_analysis_topics (analysis_id);
-CREATE INDEX idx_analysis_topics_bill ON bill_analysis_topics (bill_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_topics_analysis ON bill_analysis_topics (analysis_id);
+CREATE INDEX IF NOT EXISTS idx_analysis_topics_bill ON bill_analysis_topics (bill_id);
 
 -- bill_fiscal_estimates indexes
-CREATE INDEX idx_fiscal_estimates_analysis ON bill_fiscal_estimates (analysis_id);
-CREATE INDEX idx_fiscal_estimates_bill ON bill_fiscal_estimates (bill_id);
+CREATE INDEX IF NOT EXISTS idx_fiscal_estimates_analysis ON bill_fiscal_estimates (analysis_id);
+CREATE INDEX IF NOT EXISTS idx_fiscal_estimates_bill ON bill_fiscal_estimates (bill_id);
 
 -- bill_cosponsors indexes
-CREATE INDEX idx_bill_cosponsors_member ON bill_cosponsors (member_id);
+CREATE INDEX IF NOT EXISTS idx_bill_cosponsors_member ON bill_cosponsors (member_id);
 
 -- committee_members indexes
-CREATE INDEX idx_committee_members_member ON committee_members (member_id);
+CREATE INDEX IF NOT EXISTS idx_committee_members_member ON committee_members (member_id);
 
 -- committees indexes
-CREATE INDEX idx_committees_chamber ON committees (chamber);
-CREATE INDEX idx_committees_parent ON committees (parent_committee_id);
+CREATE INDEX IF NOT EXISTS idx_committees_chamber ON committees (chamber);
+CREATE INDEX IF NOT EXISTS idx_committees_parent ON committees (parent_committee_id);
 
 -- bill_committee_referrals indexes
-CREATE INDEX idx_bill_committee_referrals_committee ON bill_committee_referrals (committee_id);
+CREATE INDEX IF NOT EXISTS idx_bill_committee_referrals_committee ON bill_committee_referrals (committee_id);
 
 -- member_terms indexes
-CREATE INDEX idx_member_terms_member ON member_terms (member_id);
-CREATE INDEX idx_member_terms_congress ON member_terms (congress);
+CREATE INDEX IF NOT EXISTS idx_member_terms_member ON member_terms (member_id);
+CREATE INDEX IF NOT EXISTS idx_member_terms_congress ON member_terms (congress);
 
 -- member_party_history indexes
-CREATE INDEX idx_member_party_history_member ON member_party_history (member_id);
+CREATE INDEX IF NOT EXISTS idx_member_party_history_member ON member_party_history (member_id);
 
 -- member_history indexes
-CREATE INDEX idx_member_history_member ON member_history (member_id);
+CREATE INDEX IF NOT EXISTS idx_member_history_member ON member_history (member_id);
 
 -- bill_history indexes
-CREATE INDEX idx_bill_history_bill ON bill_history (bill_id);
+CREATE INDEX IF NOT EXISTS idx_bill_history_bill ON bill_history (bill_id);
 
 -- scores indexes
-CREATE INDEX idx_scores_member ON scores (member_id);
+CREATE INDEX IF NOT EXISTS idx_scores_member ON scores (member_id);
 
 -- score_history indexes
-CREATE INDEX idx_score_history_user_member ON score_history (user_id, member_id);
+CREATE INDEX IF NOT EXISTS idx_score_history_user_member ON score_history (user_id, member_id);
 
 -- member_bill_stances indexes
-CREATE INDEX idx_member_bill_stances_bill ON member_bill_stances (bill_id);
-CREATE INDEX idx_member_bill_stances_member_congress ON member_bill_stances (member_id, congress);
-CREATE INDEX idx_member_bill_stances_amendment ON member_bill_stances (amendment_id) WHERE amendment_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_member_bill_stances_bill ON member_bill_stances (bill_id);
+CREATE INDEX IF NOT EXISTS idx_member_bill_stances_member_congress ON member_bill_stances (member_id, congress);
+CREATE INDEX IF NOT EXISTS idx_member_bill_stances_amendment ON member_bill_stances (amendment_id) WHERE amendment_id IS NOT NULL;
 
 -- member_bill_stance_topics indexes
-CREATE INDEX idx_stance_topics_member ON member_bill_stance_topics (member_id);
-CREATE INDEX idx_stance_topics_bill ON member_bill_stance_topics (bill_id);
-CREATE INDEX idx_stance_topics_member_topic ON member_bill_stance_topics (member_id, topic);
-CREATE INDEX idx_stance_topics_finding ON member_bill_stance_topics (finding_id);
+CREATE INDEX IF NOT EXISTS idx_stance_topics_member ON member_bill_stance_topics (member_id);
+CREATE INDEX IF NOT EXISTS idx_stance_topics_bill ON member_bill_stance_topics (bill_id);
+CREATE INDEX IF NOT EXISTS idx_stance_topics_member_topic ON member_bill_stance_topics (member_id, topic);
+CREATE INDEX IF NOT EXISTS idx_stance_topics_finding ON member_bill_stance_topics (finding_id);
 
 -- user_bill_alignments indexes
-CREATE INDEX idx_user_bill_align_bill ON user_bill_alignments (bill_id);
-CREATE INDEX idx_user_bill_align_user ON user_bill_alignments (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_bill_align_bill ON user_bill_alignments (bill_id);
+CREATE INDEX IF NOT EXISTS idx_user_bill_align_user ON user_bill_alignments (user_id);
 
 -- user_amendment_alignments indexes
-CREATE INDEX idx_user_amend_align_amendment ON user_amendment_alignments (amendment_id);
-CREATE INDEX idx_user_amend_align_user ON user_amendment_alignments (user_id);
-CREATE INDEX idx_user_amend_align_bill ON user_amendment_alignments (bill_id);
+CREATE INDEX IF NOT EXISTS idx_user_amend_align_amendment ON user_amendment_alignments (amendment_id);
+CREATE INDEX IF NOT EXISTS idx_user_amend_align_user ON user_amendment_alignments (user_id);
+CREATE INDEX IF NOT EXISTS idx_user_amend_align_bill ON user_amendment_alignments (bill_id);
 
 -- user_legislator_pairings indexes
-CREATE INDEX idx_pairings_member ON user_legislator_pairings (member_id);
-CREATE INDEX idx_pairings_state_district ON user_legislator_pairings (state, district);
+CREATE INDEX IF NOT EXISTS idx_pairings_member ON user_legislator_pairings (member_id);
+CREATE INDEX IF NOT EXISTS idx_pairings_state_district ON user_legislator_pairings (state, district);
 
 -- processing_results indexes
-CREATE INDEX idx_processing_results_run ON processing_results (run_id);
+CREATE INDEX IF NOT EXISTS idx_processing_results_run ON processing_results (run_id);
 
 -- workflow_run_steps indexes
-CREATE INDEX idx_workflow_steps_run ON workflow_run_steps (workflow_run_id);
+CREATE INDEX IF NOT EXISTS idx_workflow_steps_run ON workflow_run_steps (workflow_run_id);
 
 -- qa indexes
-CREATE INDEX idx_qa_responses_user ON qa_user_responses (user_id);
-CREATE INDEX idx_qa_responses_question ON qa_user_responses (question_id);
+CREATE INDEX IF NOT EXISTS idx_qa_responses_user ON qa_user_responses (user_id);
+CREATE INDEX IF NOT EXISTS idx_qa_responses_question ON qa_user_responses (question_id);
 
 -- lis_members index
-CREATE INDEX idx_lis_members_natural_key ON lis_members (natural_key);
+CREATE INDEX IF NOT EXISTS idx_lis_members_natural_key ON lis_members (natural_key);
 
 -- member_lis_mapping indexes
-CREATE INDEX idx_member_lis_mapping_member ON member_lis_mapping (member_id);
-CREATE INDEX idx_member_lis_mapping_lis_member ON member_lis_mapping (lis_member_id);
+CREATE INDEX IF NOT EXISTS idx_member_lis_mapping_member ON member_lis_mapping (member_id);
+CREATE INDEX IF NOT EXISTS idx_member_lis_mapping_lis_member ON member_lis_mapping (lis_member_id);
