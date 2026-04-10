@@ -65,6 +65,9 @@ lazy val dockerSettings = Seq(
   dockerBaseImage := "gcr.io/distroless/java21-debian12",
   dockerExposedPorts := Seq.empty,
   dockerUpdateLatest := true,
+  // Allow CI to set the target registry via -Ddocker.registry=ghcr.io/eligio-taveras.
+  // When unset (local dev), sbt-native-packager defaults to Docker Hub.
+  dockerRepository := sys.props.get("docker.registry"),
   // Distroless has no shell (/bin/sh), chmod, or useradd — disable all RUN commands.
   // The distroless java21-debian12 image ships with a "nonroot" user (uid 65532).
   dockerPermissionStrategy := DockerPermissionStrategy.None,
