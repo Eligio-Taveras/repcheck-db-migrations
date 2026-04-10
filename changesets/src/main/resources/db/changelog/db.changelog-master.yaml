@@ -119,3 +119,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 012-placeholder-and-workflow-columns
+      author: repcheck
+      comment: "Relax NOT NULL for placeholder support on natural_key tables; add retry/audit columns and upsert constraint to workflow_run_steps"
+      changes:
+        - sqlFile:
+            path: changes/012-placeholder-and-workflow-columns.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
