@@ -141,3 +141,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 014-state-column-normalization
+      author: repcheck
+      comment: "Normalize state columns to 2-letter codes matching us_states.state_code PK; add FK constraints on non-history tables"
+      changes:
+        - sqlFile:
+            path: changes/014-state-column-normalization.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
