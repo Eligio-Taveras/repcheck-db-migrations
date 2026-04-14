@@ -172,7 +172,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         "idx_bill_analyses_embedding",
         "idx_bill_findings_embedding",
         "idx_bill_subjects_embedding",
-        "idx_bills_text_embedding",
+        "idx_btv_embedding",
         "idx_user_preferences_embedding",
       )
     } finally conn.close()
