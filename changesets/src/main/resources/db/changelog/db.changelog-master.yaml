@@ -163,3 +163,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 016-expand-text-version-code-enum
+      author: repcheck
+      comment: "Add 10 new text version codes from Congress.gov API — PCS, PCH, PL, RDS, RDH, RTS, RTH, ATS, ATH, PP"
+      changes:
+        - sqlFile:
+            path: changes/016-expand-text-version-code-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
