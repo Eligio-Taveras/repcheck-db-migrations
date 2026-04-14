@@ -152,3 +152,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 015-remove-bills-text-embedding
+      author: repcheck
+      comment: "Remove redundant text_embedding from bills — canonical location is bill_text_versions.embedding (linked via latest_text_version_id FK)"
+      changes:
+        - sqlFile:
+            path: changes/015-remove-bills-text-embedding.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
