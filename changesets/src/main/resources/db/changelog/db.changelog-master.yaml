@@ -174,3 +174,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 017-collapse-pipeline-runs
+      author: repcheck
+      comment: "Collapse pipeline_runs into workflow_run_steps — two-table execution tracking model, add item counts, migrate processing_results FK"
+      changes:
+        - sqlFile:
+            path: changes/017-collapse-pipeline-runs.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
