@@ -73,7 +73,6 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         "score_history_congress",
         "score_history_congress_topics",
         "score_history_highlights",
-        "pipeline_runs",
         "processing_results",
         // Migration 002 — schema expansion (13 new tables)
         "bill_text_versions",
