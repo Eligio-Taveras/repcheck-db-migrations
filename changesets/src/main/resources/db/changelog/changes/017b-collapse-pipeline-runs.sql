@@ -84,5 +84,5 @@ DROP TABLE IF EXISTS pipeline_runs CASCADE;
 -- ===========================================================================
 -- pipeline_status_type was only used by pipeline_runs (now dropped)
 -- trigger_type was used by pipeline_runs and workflow_runs (both converted)
-DROP TYPE IF EXISTS pipeline_status_type;
-DROP TYPE IF EXISTS trigger_type;
+DROP TYPE IF EXISTS pipeline_status_type CASCADE;
+DROP TYPE IF EXISTS trigger_type CASCADE;
