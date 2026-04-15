@@ -197,3 +197,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 018-expand-lis-members
+      author: repcheck
+      comment: "Add first_name, last_name, party, state, last_verified columns to lis_members table"
+      changes:
+        - sqlFile:
+            path: changes/018-expand-lis-members.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: true
