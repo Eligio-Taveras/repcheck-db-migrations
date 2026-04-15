@@ -174,3 +174,26 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 017a-add-completed-with-errors-enum
+      author: repcheck
+      runInTransaction: false
+      comment: "Add completed_with_errors to workflow_status_type enum (must run outside transaction)"
+      changes:
+        - sqlFile:
+            path: changes/017a-add-completed-with-errors-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 017b-collapse-pipeline-runs
+      author: repcheck
+      comment: "Collapse pipeline_runs into workflow_run_steps — two-table execution tracking model, add item counts, migrate processing_results FK"
+      changes:
+        - sqlFile:
+            path: changes/017b-collapse-pipeline-runs.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
