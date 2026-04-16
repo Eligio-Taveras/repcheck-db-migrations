@@ -219,3 +219,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 020-widen-member-party-history-unique
+      author: repcheck
+      comment: "Widen uq_member_party_history to UNIQUE (member_id, start_year, party_name) so intra-year party switches are preserved instead of silently dropped by ON CONFLICT DO NOTHING"
+      changes:
+        - sqlFile:
+            path: changes/020-widen-member-party-history-unique.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
