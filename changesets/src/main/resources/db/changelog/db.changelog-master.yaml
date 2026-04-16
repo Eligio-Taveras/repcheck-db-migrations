@@ -208,3 +208,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: true
+
+  - changeSet:
+      id: 019-restore-member-party-history-unique
+      author: repcheck
+      comment: "Restore uq_member_party_history UNIQUE (member_id, start_year) dropped as a side-effect of migration 011's TEXT->BIGINT column rebuild"
+      changes:
+        - sqlFile:
+            path: changes/019-restore-member-party-history-unique.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
