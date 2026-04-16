@@ -177,10 +177,13 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
-  it should "preserve uq_member_party_history UNIQUE (member_id, start_year)" taggedAs DockerRequired in {
-    // Regression guard for migration 019. Migration 011 silently dropped this constraint when
-    // rebuilding the member_id column from TEXT to BIGINT; the ingestion pipeline's party-history
-    // writer relies on it for ON CONFLICT (member_id, start_year) DO NOTHING idempotency.
+  it should "preserve uq_member_party_history UNIQUE (member_id, start_year, party_name)" taggedAs DockerRequired in {
+    // Regression guard for migrations 019 + 020.
+    //   019 restored the constraint dropped by migration 011's TEXT->BIGINT column rebuild.
+    //   020 widened it from (member_id, start_year) to (member_id, start_year, party_name)
+    //   so intra-year party switches are preserved — Congress members can legally switch
+    //   parties multiple times per year, and the ingestion pipeline's ON CONFLICT clause
+    //   must match so it doesn't silently drop the second affiliation.
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -198,7 +201,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       stmt.close()
 
       val _ = found shouldBe true
-      defText should (include("member_id") and include("start_year"))
+      defText should (include("member_id") and include("start_year") and include("party_name"))
     } finally conn.close()
   }
 
