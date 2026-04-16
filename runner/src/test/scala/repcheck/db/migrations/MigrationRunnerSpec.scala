@@ -177,4 +177,29 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  it should "preserve uq_member_party_history UNIQUE (member_id, start_year)" taggedAs DockerRequired in {
+    // Regression guard for migration 019. Migration 011 silently dropped this constraint when
+    // rebuilding the member_id column from TEXT to BIGINT; the ingestion pipeline's party-history
+    // writer relies on it for ON CONFLICT (member_id, start_year) DO NOTHING idempotency.
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname, pg_get_constraintdef(oid) AS def
+          |FROM pg_constraint
+          |WHERE conrelid = 'member_party_history'::regclass
+          |  AND contype = 'u'
+          |  AND conname = 'uq_member_party_history'""".stripMargin
+      )
+
+      val found   = rs.next()
+      val defText = if (found) rs.getString("def") else ""
+      rs.close()
+      stmt.close()
+
+      val _ = found shouldBe true
+      defText should (include("member_id") and include("start_year"))
+    } finally conn.close()
+  }
+
 }
