@@ -230,3 +230,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 021-expand-text-version-code-enum
+      author: repcheck
+      comment: "Add 3 new text version codes from Congress.gov API — RCH (Reference Change House), EAS (Engrossed Amendment Senate), RIS (Referral Instructions Senate)"
+      changes:
+        - sqlFile:
+            path: changes/021-expand-text-version-code-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
