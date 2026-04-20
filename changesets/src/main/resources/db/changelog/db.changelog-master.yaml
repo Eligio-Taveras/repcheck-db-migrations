@@ -241,3 +241,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 022-expand-vote-method-enum
+      author: repcheck
+      comment: "Add 3 new vote-method values from Congress.gov House vote API — 'yea-and-nay', '2/3 yea-and-nay', 'quorum call'. Lowercased to match existing enum convention."
+      changes:
+        - sqlFile:
+            path: changes/022-expand-vote-method-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
