@@ -252,3 +252,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 023-vote-positions-lis-member-id
+      author: repcheck
+      comment: "Dual-identity vote_positions — drop uq_vote_positions, relax member_id to nullable, add lis_member_id FK with XOR CHECK, partial UNIQUE indexes per chamber, and vote_positions_resolved VIEW unifying both arms via member_lis_mapping."
+      changes:
+        - sqlFile:
+            path: changes/023-vote-positions-lis-member-id.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false

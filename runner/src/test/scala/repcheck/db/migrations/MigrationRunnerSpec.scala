@@ -205,4 +205,334 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  // ---------------------------------------------------------------------------
+  // Migration 023 — dual-identity vote_positions (member_id XOR lis_member_id)
+  // ---------------------------------------------------------------------------
+
+  it should "make vote_positions.id a BIGSERIAL PRIMARY KEY" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, data_type, column_default, is_nullable
+          |FROM information_schema.columns
+          |WHERE table_name = 'vote_positions' AND column_name = 'id'""".stripMargin
+      )
+
+      val found      = rs.next()
+      val dataType   = if (found) rs.getString("data_type") else ""
+      val colDefault = if (found) rs.getString("column_default") else ""
+      val isNullable = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+
+      val _ = found shouldBe true
+      val _ = dataType shouldBe "bigint"
+      val _ = isNullable shouldBe "NO"
+      colDefault should include("nextval")
+    } finally conn.close()
+  }
+
+  it should "make vote_positions.member_id nullable" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT is_nullable FROM information_schema.columns
+          |WHERE table_name = 'vote_positions' AND column_name = 'member_id'""".stripMargin
+      )
+
+      val found      = rs.next()
+      val isNullable = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+
+      val _ = found shouldBe true
+      val _ = isNullable shouldBe "YES"
+    } finally conn.close()
+  }
+
+  it should "add vote_positions.lis_member_id with FK to lis_members(id)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+
+      // Column exists, BIGINT, nullable
+      val colRs = stmt.executeQuery(
+        """SELECT data_type, is_nullable FROM information_schema.columns
+          |WHERE table_name = 'vote_positions' AND column_name = 'lis_member_id'""".stripMargin
+      )
+      val colFound   = colRs.next()
+      val dataType   = if (colFound) colRs.getString("data_type") else ""
+      val isNullable = if (colFound) colRs.getString("is_nullable") else ""
+      colRs.close()
+
+      // FK constraint to lis_members(id)
+      val fkRs = stmt.executeQuery(
+        """SELECT confrelid::regclass::text AS referenced_table,
+          |       pg_get_constraintdef(oid) AS def
+          |FROM pg_constraint
+          |WHERE conrelid = 'vote_positions'::regclass
+          |  AND contype = 'f'
+          |  AND pg_get_constraintdef(oid) LIKE '%lis_member_id%'""".stripMargin
+      )
+      val fkFound  = fkRs.next()
+      val refTable = if (fkFound) fkRs.getString("referenced_table") else ""
+      val fkDef    = if (fkFound) fkRs.getString("def") else ""
+      fkRs.close()
+      stmt.close()
+
+      val _ = colFound shouldBe true
+      val _ = dataType shouldBe "bigint"
+      val _ = isNullable shouldBe "YES"
+      val _ = fkFound shouldBe true
+      val _ = refTable shouldBe "lis_members"
+      fkDef should (include("lis_member_id") and include("REFERENCES lis_members(id)"))
+    } finally conn.close()
+  }
+
+  it should "enforce chk_vp_xor_identity — reject (NULL, NULL) and (Some, Some)" taggedAs DockerRequired in {
+    // This verifies the XOR CHECK by exercising the DB directly. We seed a
+    // minimal row-dependency graph (member, lis_member, vote) so we can attempt
+    // inserts that should be rejected by the CHECK alone (not by FK or NOT NULL).
+    //
+    // Uses explicit SAVEPOINTs so a failed INSERT (which aborts the tx in
+    // Postgres JDBC) can be rolled back to the savepoint and further inserts
+    // can still see the seed rows.
+    val conn = getConnection
+    try {
+      conn.setAutoCommit(false)
+      val stmt = conn.createStatement()
+
+      // Seed prerequisite rows — post-migration 012, placeholders only need the natural_key.
+      val _ = stmt.executeUpdate(
+        "INSERT INTO members (natural_key) VALUES ('XOR_TEST_MEMBER')"
+      )
+      val _ = stmt.executeUpdate(
+        "INSERT INTO lis_members (natural_key) VALUES ('XOR_TEST_LIS')"
+      )
+      val _ = stmt.executeUpdate(
+        """INSERT INTO votes (natural_key, congress, chamber, roll_number)
+          |VALUES ('XOR_TEST_VOTE', 118, 'House'::chamber_type, 1)""".stripMargin
+      )
+
+      def loadId(sql: String): Long = {
+        val rs = stmt.executeQuery(sql)
+        rs.next()
+        val id = rs.getLong("id")
+        rs.close()
+        id
+      }
+      val memberId    = loadId("SELECT id FROM members WHERE natural_key = 'XOR_TEST_MEMBER'")
+      val lisMemberId = loadId("SELECT id FROM lis_members WHERE natural_key = 'XOR_TEST_LIS'")
+      val voteId      = loadId("SELECT id FROM votes WHERE natural_key = 'XOR_TEST_VOTE'")
+
+      // (NULL, NULL) must be rejected — use savepoint so the seeds survive.
+      val sp1 = conn.setSavepoint("before_null_null")
+      val bothNullEx = intercept[java.sql.SQLException] {
+        val ps = conn.prepareStatement(
+          "INSERT INTO vote_positions (vote_id, member_id, lis_member_id, position) " +
+            "VALUES (?, NULL, NULL, 'Yea'::vote_cast_type)"
+        )
+        ps.setLong(1, voteId)
+        try {
+          val _ = ps.executeUpdate()
+          ()
+        } finally ps.close()
+      }
+      val _ = bothNullEx.toString should include("chk_vp_xor_identity")
+      conn.rollback(sp1)
+
+      // (Some, Some) must be rejected — seeds still present due to savepoint rollback.
+      val sp2 = conn.setSavepoint("before_some_some")
+      val bothSetEx = intercept[java.sql.SQLException] {
+        val ps = conn.prepareStatement(
+          "INSERT INTO vote_positions (vote_id, member_id, lis_member_id, position) " +
+            "VALUES (?, ?, ?, 'Yea'::vote_cast_type)"
+        )
+        ps.setLong(1, voteId)
+        ps.setLong(2, memberId)
+        ps.setLong(3, lisMemberId)
+        try {
+          val _ = ps.executeUpdate()
+          ()
+        } finally ps.close()
+      }
+      val _ = bothSetEx.toString should include("chk_vp_xor_identity")
+      conn.rollback(sp2)
+
+      stmt.close()
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
+  it should "enforce uq_vp_vote_member and uq_vp_vote_lis as partial UNIQUE indexes" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexname, indexdef FROM pg_indexes
+          |WHERE tablename = 'vote_positions'
+          |  AND indexname IN ('uq_vp_vote_member', 'uq_vp_vote_lis')
+          |ORDER BY indexname""".stripMargin
+      )
+
+      val rows = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r => r.getString("indexname") -> r.getString("indexdef"))
+        .toMap
+      rs.close()
+      stmt.close()
+
+      val _ = rows.keySet shouldBe Set("uq_vp_vote_lis", "uq_vp_vote_member")
+
+      val voteMemberDef = rows("uq_vp_vote_member")
+      val _             = voteMemberDef should (include("UNIQUE") and include("vote_id") and include("member_id"))
+      val _             = voteMemberDef should include("WHERE (member_id IS NOT NULL)")
+
+      val voteLisDef = rows("uq_vp_vote_lis")
+      val _          = voteLisDef should (include("UNIQUE") and include("vote_id") and include("lis_member_id"))
+      voteLisDef should include("WHERE (lis_member_id IS NOT NULL)")
+    } finally conn.close()
+  }
+
+  it should "drop the old uq_vote_positions composite UNIQUE constraint" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname FROM pg_constraint
+          |WHERE conrelid = 'vote_positions'::regclass
+          |  AND conname = 'uq_vote_positions'""".stripMargin
+      )
+
+      val found = rs.next()
+      rs.close()
+      stmt.close()
+
+      val _ = found shouldBe false
+    } finally conn.close()
+  }
+
+  it should "create vote_positions_resolved view unifying House and Senate arms" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      conn.setAutoCommit(false)
+      val stmt = conn.createStatement()
+
+      // View exists
+      val viewRs = stmt.executeQuery(
+        """SELECT table_name FROM information_schema.views
+          |WHERE table_schema = 'public' AND table_name = 'vote_positions_resolved'""".stripMargin
+      )
+      val viewFound = viewRs.next()
+      viewRs.close()
+      val _ = viewFound shouldBe true
+
+      // Seed data so both arms return rows:
+      //   - One House row (member_id populated, lis_member_id NULL)
+      //   - One Senate row mapped via member_lis_mapping
+      //   - One Senate row unmapped (should be excluded)
+
+      val _ = stmt.executeUpdate(
+        """INSERT INTO members (natural_key)
+          |VALUES ('VPR_TEST_HOUSE'),
+          |       ('VPR_TEST_SEN_MAPPED')""".stripMargin
+      )
+      val _ = stmt.executeUpdate(
+        """INSERT INTO lis_members (natural_key)
+          |VALUES ('VPR_TEST_LIS_MAPPED'),
+          |       ('VPR_TEST_LIS_UNMAPPED')""".stripMargin
+      )
+      val _ = stmt.executeUpdate(
+        """INSERT INTO votes (natural_key, congress, chamber, roll_number)
+          |VALUES ('VPR_TEST_VOTE', 118, 'House'::chamber_type, 2)""".stripMargin
+      )
+
+      def loadId(sql: String): Long = {
+        val rs = stmt.executeQuery(sql)
+        rs.next()
+        val id = rs.getLong("id")
+        rs.close()
+        id
+      }
+      val houseMemberId = loadId("SELECT id FROM members WHERE natural_key = 'VPR_TEST_HOUSE'")
+      val senMappedId   = loadId("SELECT id FROM members WHERE natural_key = 'VPR_TEST_SEN_MAPPED'")
+      val lisMappedId   = loadId("SELECT id FROM lis_members WHERE natural_key = 'VPR_TEST_LIS_MAPPED'")
+      val lisUnmappedId = loadId("SELECT id FROM lis_members WHERE natural_key = 'VPR_TEST_LIS_UNMAPPED'")
+      val voteId        = loadId("SELECT id FROM votes WHERE natural_key = 'VPR_TEST_VOTE'")
+
+      // Map one of the senators so the Senate arm can resolve it.
+      val mapPs = conn.prepareStatement(
+        "INSERT INTO member_lis_mapping (member_id, lis_member_id) VALUES (?, ?)"
+      )
+      mapPs.setLong(1, senMappedId)
+      mapPs.setLong(2, lisMappedId)
+      val _ = mapPs.executeUpdate()
+      mapPs.close()
+
+      // Insert vote_positions rows exercising both arms + unmapped senator.
+      val vpHouse = conn.prepareStatement(
+        "INSERT INTO vote_positions (vote_id, member_id, lis_member_id, position) " +
+          "VALUES (?, ?, NULL, 'Yea'::vote_cast_type)"
+      )
+      vpHouse.setLong(1, voteId)
+      vpHouse.setLong(2, houseMemberId)
+      val _ = vpHouse.executeUpdate()
+      vpHouse.close()
+
+      val vpSenMapped = conn.prepareStatement(
+        "INSERT INTO vote_positions (vote_id, member_id, lis_member_id, position) " +
+          "VALUES (?, NULL, ?, 'Nay'::vote_cast_type)"
+      )
+      vpSenMapped.setLong(1, voteId)
+      vpSenMapped.setLong(2, lisMappedId)
+      val _ = vpSenMapped.executeUpdate()
+      vpSenMapped.close()
+
+      val vpSenUnmapped = conn.prepareStatement(
+        "INSERT INTO vote_positions (vote_id, member_id, lis_member_id, position) " +
+          "VALUES (?, NULL, ?, 'Nay'::vote_cast_type)"
+      )
+      vpSenUnmapped.setLong(1, voteId)
+      vpSenUnmapped.setLong(2, lisUnmappedId)
+      val _ = vpSenUnmapped.executeUpdate()
+      vpSenUnmapped.close()
+
+      // View should return 2 rows: House + mapped Senate. Unmapped is excluded.
+      val vpsRs = stmt.executeQuery(
+        s"""SELECT member_id, lis_member_id FROM vote_positions_resolved
+            |WHERE vote_id = $voteId
+            |ORDER BY member_id""".stripMargin
+      )
+      val resolvedRows = Iterator
+        .continually(vpsRs)
+        .takeWhile(_.next())
+        .map { r =>
+          val mId    = r.getLong("member_id")
+          val mIdOpt = if (r.wasNull()) None else Some(mId)
+          val lIdRaw = r.getLong("lis_member_id")
+          val lIdOpt = if (r.wasNull()) None else Some(lIdRaw)
+          (mIdOpt, lIdOpt)
+        }
+        .toList
+      vpsRs.close()
+      stmt.close()
+
+      val _ = resolvedRows.size shouldBe 2
+      // Both rows must carry a member_id (House arm passes through; Senate arm resolved via mapping).
+      val _ = resolvedRows.map(_._1) should contain theSameElementsAs List(Some(houseMemberId), Some(senMappedId))
+      // Senate arm preserves lis_member_id; House arm is NULL.
+      resolvedRows.map(_._2) should contain theSameElementsAs List(None, Some(lisMappedId))
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
 }
