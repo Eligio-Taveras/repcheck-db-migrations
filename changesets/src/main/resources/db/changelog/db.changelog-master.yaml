@@ -263,3 +263,25 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 024-add-candidate-and-election-enum-values
+      author: repcheck
+      comment: "Speaker-election support: add 'Candidate' to vote_cast_type and 'Election' to vote_type_enum. Split from 025 because PG requires an ALTER TYPE ADD VALUE to commit before its new value can be used."
+      changes:
+        - sqlFile:
+            path: changes/024-add-candidate-and-election-enum-values.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 025-vote-positions-candidate-name
+      author: repcheck
+      comment: "Add vote_cast_candidate_name TEXT column to vote_positions + vote_history_positions with a CHECK tying it to position='Candidate'. Update the vote_positions_resolved VIEW to include the new column."
+      changes:
+        - sqlFile:
+            path: changes/025-vote-positions-candidate-name.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false

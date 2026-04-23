@@ -535,4 +535,160 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     }
   }
 
+  // =========================================================================
+  // Migration 024 — enum value additions
+  // =========================================================================
+
+  /**
+   * Pull every `value` column from a ResultSet into an immutable List. Wart-compliant (no mutable collection) via
+   * Iterator.continually + takeWhile.
+   */
+  private def readAllValues(rs: java.sql.ResultSet): List[String] =
+    Iterator.continually(rs.next()).takeWhile(identity).map(_ => rs.getString("value")).toList
+
+  it should "add 'Candidate' to vote_cast_type enum (migration 024)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT unnest(enum_range(NULL::vote_cast_type))::text AS value""".stripMargin
+      )
+      val values = readAllValues(rs)
+      rs.close()
+      stmt.close()
+      values should contain("Candidate")
+    } finally conn.close()
+  }
+
+  it should "add 'Election' to vote_type_enum (migration 024)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT unnest(enum_range(NULL::vote_type_enum))::text AS value""".stripMargin
+      )
+      val values = readAllValues(rs)
+      rs.close()
+      stmt.close()
+      values should contain("Election")
+    } finally conn.close()
+  }
+
+  // =========================================================================
+  // Migration 025 — vote_cast_candidate_name column + CHECK + VIEW update
+  // =========================================================================
+
+  it should "add vote_cast_candidate_name TEXT column on vote_positions (migration 025)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT data_type, is_nullable FROM information_schema.columns
+          |WHERE table_name = 'vote_positions' AND column_name = 'vote_cast_candidate_name'""".stripMargin
+      )
+      val found  = rs.next()
+      val dt     = if (found) rs.getString("data_type") else ""
+      val nullOk = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = dt shouldBe "text"
+      nullOk shouldBe "YES"
+    } finally conn.close()
+  }
+
+  it should "mirror vote_cast_candidate_name on vote_history_positions (migration 025)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT data_type FROM information_schema.columns
+          |WHERE table_name = 'vote_history_positions' AND column_name = 'vote_cast_candidate_name'""".stripMargin
+      )
+      val found = rs.next()
+      val dt    = if (found) rs.getString("data_type") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      dt shouldBe "text"
+    } finally conn.close()
+  }
+
+  it should "enforce chk_vp_candidate_name — position='Candidate' requires non-null name" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      conn.setAutoCommit(false)
+      val stmt = conn.createStatement()
+
+      // Seed members + a bill-less vote so we can INSERT positions.
+      val memRs = stmt.executeQuery(
+        """INSERT INTO members (natural_key) VALUES ('VCN_TEST_M1') RETURNING id""".stripMargin
+      )
+      memRs.next()
+      val memberId = memRs.getLong(1)
+      memRs.close()
+
+      val voteRs = stmt.executeQuery(
+        """INSERT INTO votes (natural_key, congress, chamber, roll_number)
+          |VALUES ('VCN_TEST_VOTE', 119, 'House'::chamber_type, 9999)
+          |RETURNING id""".stripMargin
+      )
+      voteRs.next()
+      val voteId = voteRs.getLong(1)
+      voteRs.close()
+
+      // Case 1: position='Yea' with a candidate_name -> CHECK must reject.
+      stmt.execute("SAVEPOINT sp1")
+      val rejectYea = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          s"""INSERT INTO vote_positions (vote_id, member_id, position, vote_cast_candidate_name)
+             |VALUES ($voteId, $memberId, 'Yea', 'Jeffries')""".stripMargin
+        )
+      }
+      stmt.execute("ROLLBACK TO SAVEPOINT sp1")
+      val _ = rejectYea.isFailure shouldBe true
+
+      // Case 2: position='Candidate' with NULL candidate_name -> CHECK must reject.
+      stmt.execute("SAVEPOINT sp2")
+      val rejectNullName = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          s"""INSERT INTO vote_positions (vote_id, member_id, position)
+             |VALUES ($voteId, $memberId, 'Candidate')""".stripMargin
+        )
+      }
+      stmt.execute("ROLLBACK TO SAVEPOINT sp2")
+      val _ = rejectNullName.isFailure shouldBe true
+
+      // Case 3: position='Candidate' + name -> allowed.
+      val okCandidate = stmt.executeUpdate(
+        s"""INSERT INTO vote_positions (vote_id, member_id, position, vote_cast_candidate_name)
+           |VALUES ($voteId, $memberId, 'Candidate', 'Jeffries')""".stripMargin
+      )
+      val _ = okCandidate shouldBe 1
+
+      stmt.close()
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
+  it should "expose vote_cast_candidate_name through vote_positions_resolved VIEW (migration 025)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public'
+          |  AND table_name = 'vote_positions_resolved'
+          |  AND column_name = 'vote_cast_candidate_name'""".stripMargin
+      )
+      val found = rs.next()
+      rs.close()
+      stmt.close()
+      found shouldBe true
+    } finally conn.close()
+  }
+
 }
