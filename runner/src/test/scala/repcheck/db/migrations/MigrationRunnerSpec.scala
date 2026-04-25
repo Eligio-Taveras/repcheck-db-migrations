@@ -855,4 +855,46 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  it should "shrink raw_bill_text.embedding to vector(1024) (migration 028)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      // format_type renders pgvector typmod as "vector(N)" — N is the dimension
+      val rs = stmt.executeQuery(
+        """SELECT format_type(a.atttypid, a.atttypmod) AS rendered_type
+          |FROM pg_attribute a
+          |WHERE a.attrelid = 'public.raw_bill_text'::regclass
+          |  AND a.attname = 'embedding'
+          |  AND NOT a.attisdropped""".stripMargin
+      )
+      val found    = rs.next()
+      val rendered = if (found) rs.getString("rendered_type") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      rendered shouldBe "vector(1024)"
+    } finally conn.close()
+  }
+
+  it should "rebuild the raw_bill_text.embedding HNSW index on the new column (migration 028)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexdef
+          |FROM pg_indexes
+          |WHERE schemaname = 'public'
+          |  AND tablename = 'raw_bill_text'
+          |  AND indexname = 'idx_raw_bill_text_embedding'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("indexdef") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("USING hnsw")
+      defn should include("vector_cosine_ops")
+    } finally conn.close()
+  }
+
 }

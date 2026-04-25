@@ -307,3 +307,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 028-shrink-raw-bill-text-embedding-dims
+      author: repcheck
+      comment: "Drop and recreate raw_bill_text.embedding as vector(1024) (was vector(1536)) for the bill-text pipeline's swap from qwen3-embedding:4b to qwen3-embedding:0.6b. The 0.6b variant emits 1024 dims via truncated MRL output and reaches GPU saturation at ~50 chunks/batch vs ~10 for the 4B. Drop-and-recreate is safe because raw_bill_text is one migration old and contains only dev / test data; production embeddings backfill on the next pipeline tick (the pipeline already re-embeds rows whose embedding is NULL). HNSW index rebuilt on the new column."
+      changes:
+        - sqlFile:
+            path: changes/028-shrink-raw-bill-text-embedding-dims.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
