@@ -742,14 +742,15 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
 
       val byName = columns.map { case (n, nu, t) => n -> (nu, t) }.toMap
 
-      val _ = byName.keySet should contain allOf ("id", "bill_id", "version_id", "chunk_index", "content", "embedding", "created_at")
+      val _ =
+        byName.keySet should contain allOf ("id", "bill_id", "version_id", "chunk_index", "content", "embedding", "created_at")
       val _ = byName("id")._1 shouldBe false          // NOT NULL
       val _ = byName("bill_id")._1 shouldBe false     // NOT NULL
       val _ = byName("version_id")._1 shouldBe true   // nullable per the design
       val _ = byName("chunk_index")._1 shouldBe false // NOT NULL
       val _ = byName("content")._1 shouldBe false     // NOT NULL
       val _ = byName("embedding")._1 shouldBe true    // nullable (allows inserting row before embed call completes)
-      byName("embedding")._2 shouldBe "USER-DEFINED"  // pgvector type
+      byName("embedding")._2 shouldBe "USER-DEFINED" // pgvector type
     } finally conn.close()
   }
 
