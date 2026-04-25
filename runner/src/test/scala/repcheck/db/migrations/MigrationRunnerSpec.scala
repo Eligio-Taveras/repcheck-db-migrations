@@ -317,8 +317,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         "INSERT INTO lis_members (natural_key) VALUES ('XOR_TEST_LIS')"
       )
       val _ = stmt.executeUpdate(
-        """INSERT INTO votes (natural_key, congress, chamber, roll_number)
-          |VALUES ('XOR_TEST_VOTE', 118, 'House'::chamber_type, 1)""".stripMargin
+        """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number)
+          |VALUES ('XOR_TEST_VOTE', 118, 'House'::chamber_type, 1, 1)""".stripMargin
       )
 
       def loadId(sql: String): Long = {
@@ -454,8 +454,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
           |       ('VPR_TEST_LIS_UNMAPPED')""".stripMargin
       )
       val _ = stmt.executeUpdate(
-        """INSERT INTO votes (natural_key, congress, chamber, roll_number)
-          |VALUES ('VPR_TEST_VOTE', 118, 'House'::chamber_type, 2)""".stripMargin
+        """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number)
+          |VALUES ('VPR_TEST_VOTE', 118, 'House'::chamber_type, 1, 2)""".stripMargin
       )
 
       def loadId(sql: String): Long = {
@@ -634,8 +634,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       memRs.close()
 
       val voteRs = stmt.executeQuery(
-        """INSERT INTO votes (natural_key, congress, chamber, roll_number)
-          |VALUES ('VCN_TEST_VOTE', 119, 'House'::chamber_type, 9999)
+        """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number)
+          |VALUES ('VCN_TEST_VOTE', 119, 'House'::chamber_type, 1, 9999)
           |RETURNING id""".stripMargin
       )
       voteRs.next()
