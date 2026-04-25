@@ -775,4 +775,84 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  it should "drop the legacy uq_votes_natural_key constraint on (congress, chamber, roll_number) (migration 027)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.votes'::regclass
+          |  AND conname = 'uq_votes_natural_key'""".stripMargin
+      )
+      val present = rs.next()
+      rs.close()
+      stmt.close()
+      // Migration 027 dropped this legacy constraint. uq_votes_natural_key_pk on (natural_key)
+      // remains and is the correct identity (sessions distinguished via the string format).
+      present shouldBe false
+    } finally conn.close()
+  }
+
+  it should "retain the natural_key string constraint after migration 027" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.votes'::regclass
+          |  AND conname = 'uq_votes_natural_key_pk'""".stripMargin
+      )
+      val present = rs.next()
+      rs.close()
+      stmt.close()
+      present shouldBe true
+    } finally conn.close()
+  }
+
+  it should "add the session-aware composite uq_votes_congress_chamber_session_roll constraint (migration 027)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT array_to_string(
+          |         array_agg(a.attname ORDER BY array_position(c.conkey, a.attnum)),
+          |         ','
+          |       ) AS columns
+          |FROM pg_constraint c
+          |JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+          |WHERE c.conrelid = 'public.votes'::regclass
+          |  AND c.conname = 'uq_votes_congress_chamber_session_roll'
+          |GROUP BY c.conname""".stripMargin
+      )
+      val found = rs.next()
+      val cols  = if (found) rs.getString("columns") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      cols shouldBe "congress,chamber,session_number,roll_number"
+    } finally conn.close()
+  }
+
+  it should "make votes.session_number NOT NULL after migration 027" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT is_nullable
+          |FROM information_schema.columns
+          |WHERE table_schema = 'public'
+          |  AND table_name = 'votes'
+          |  AND column_name = 'session_number'""".stripMargin
+      )
+      val found    = rs.next()
+      val nullable = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      nullable shouldBe "NO"
+    } finally conn.close()
+  }
+
 }
