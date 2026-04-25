@@ -897,4 +897,125 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  it should "have NO remaining vector(1536) columns anywhere in public.* (migration 029)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      // Find every column whose pgvector type is NOT vector(1024). Post-029 the only allowed
+      // dimension across the schema is 1024 — any leftover vector(1536) (or any other size)
+      // means a column was missed by 029 and the schema is inconsistent.
+      val rs = stmt.executeQuery(
+        """SELECT c.relname AS table_name,
+          |       a.attname AS column_name,
+          |       format_type(a.atttypid, a.atttypmod) AS rendered_type
+          |FROM pg_attribute a
+          |JOIN pg_class c ON c.oid = a.attrelid
+          |JOIN pg_namespace n ON n.oid = c.relnamespace
+          |WHERE n.nspname = 'public'
+          |  AND a.attnum > 0
+          |  AND NOT a.attisdropped
+          |  AND format_type(a.atttypid, a.atttypmod) LIKE 'vector(%'
+          |  AND format_type(a.atttypid, a.atttypmod) <> 'vector(1024)'
+          |ORDER BY c.relname, a.attname""".stripMargin
+      )
+      val offenders = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r => s"${r.getString("table_name")}.${r.getString("column_name")} = ${r.getString("rendered_type")}")
+        .toList
+      rs.close()
+      stmt.close()
+      offenders shouldBe List.empty[String]
+    } finally conn.close()
+  }
+
+  it should "shrink all 17 embedding columns to vector(1024) (migration 029)" taggedAs DockerRequired in {
+    val expected = List(
+      "bill_subjects"               -> "embedding",
+      "amendment_findings"          -> "embedding",
+      "bill_analyses"               -> "embedding",
+      "bill_findings"               -> "embedding",
+      "user_preferences"            -> "embedding",
+      "bill_concept_summaries"      -> "embedding",
+      "bill_text_sections"          -> "embedding",
+      "bill_concept_groups"         -> "embedding",
+      "amendment_analyses"          -> "embedding",
+      "amendment_concept_summaries" -> "embedding",
+      "amendment_text_versions"     -> "embedding",
+      "scores"                      -> "reasoning_embedding",
+      "score_history"               -> "reasoning_embedding",
+      "member_bill_stance_topics"   -> "reasoning_embedding",
+      "user_bill_alignments"        -> "reasoning_embedding",
+      "user_amendment_alignments"   -> "reasoning_embedding",
+      "bill_subject_history"        -> "embedding",
+    )
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val mismatches = expected.flatMap {
+        case (tableName, columnName) =>
+          val rs = stmt.executeQuery(
+            s"""SELECT format_type(a.atttypid, a.atttypmod) AS rendered_type
+             |FROM pg_attribute a
+             |WHERE a.attrelid = 'public.$tableName'::regclass
+             |  AND a.attname = '$columnName'
+             |  AND NOT a.attisdropped""".stripMargin
+          )
+          val found    = rs.next()
+          val rendered = if (found) rs.getString("rendered_type") else "<missing>"
+          rs.close()
+          if (rendered == "vector(1024)") None else Some(s"$tableName.$columnName = $rendered")
+      }
+      stmt.close()
+      mismatches shouldBe List.empty[String]
+    } finally conn.close()
+  }
+
+  it should "rebuild all 16 HNSW indexes on the unified embedding columns (migration 029)" taggedAs DockerRequired in {
+    // bill_subject_history is intentionally excluded: it's the only one of the 17 columns
+    // without an index, mirroring the original migration 010 (which added the column without
+    // an index). 029 preserves that pattern.
+    val expected = List(
+      "bill_subjects"               -> "idx_bill_subjects_embedding",
+      "amendment_findings"          -> "idx_amendment_findings_embedding",
+      "bill_analyses"               -> "idx_bill_analyses_embedding",
+      "bill_findings"               -> "idx_bill_findings_embedding",
+      "user_preferences"            -> "idx_user_preferences_embedding",
+      "bill_concept_summaries"      -> "idx_concept_summaries_embedding",
+      "bill_text_sections"          -> "idx_text_sections_embedding",
+      "bill_concept_groups"         -> "idx_concept_groups_embedding",
+      "amendment_analyses"          -> "idx_amendment_analyses_embedding",
+      "amendment_concept_summaries" -> "idx_amendment_concept_summaries_embedding",
+      "amendment_text_versions"     -> "idx_amendment_text_versions_embedding",
+      "scores"                      -> "idx_scores_reasoning_embedding",
+      "score_history"               -> "idx_score_history_reasoning_embedding",
+      "member_bill_stance_topics"   -> "idx_stance_topics_reasoning_embedding",
+      "user_bill_alignments"        -> "idx_user_bill_align_reasoning_embedding",
+      "user_amendment_alignments"   -> "idx_user_amend_align_reasoning_embedding",
+    )
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val missing = expected.flatMap {
+        case (tableName, indexName) =>
+          val rs = stmt.executeQuery(
+            s"""SELECT indexdef
+             |FROM pg_indexes
+             |WHERE schemaname = 'public'
+             |  AND tablename = '$tableName'
+             |  AND indexname = '$indexName'""".stripMargin
+          )
+          val found = rs.next()
+          val defn  = if (found) rs.getString("indexdef") else ""
+          rs.close()
+          val isHnsw   = defn.contains("USING hnsw")
+          val isCosine = defn.contains("vector_cosine_ops")
+          if (found && isHnsw && isCosine) None
+          else Some(s"$tableName.$indexName missing or malformed: '$defn'")
+      }
+      stmt.close()
+      missing shouldBe List.empty[String]
+    } finally conn.close()
+  }
+
 }

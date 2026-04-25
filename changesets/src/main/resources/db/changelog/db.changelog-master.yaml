@@ -318,3 +318,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 029-unify-embeddings-to-1024
+      author: repcheck
+      comment: "Unify ALL 17 remaining vector(1536) embedding columns to vector(1024) for schema consistency, completing the qwen3-embedding:0.6b swap started in migration 028. Each of (bill_subjects, bill_subject_history, amendment_findings, bill_analyses, bill_findings, user_preferences, bill_concept_summaries, bill_text_sections, bill_concept_groups, amendment_analyses, amendment_concept_summaries, amendment_text_versions, scores.reasoning, score_history.reasoning, member_bill_stance_topics.reasoning, user_bill_alignments.reasoning, user_amendment_alignments.reasoning) gets its embedding column dropped and recreated at 1024 dims, and its HNSW index rebuilt on the new column (16 indexes — bill_subject_history has no index). Drop-and-recreate is safe because none of these tables are populated in production today; the downstream pipelines that will write to them (LLM analysis, scoring engine, user-stance materialization) are still in design or not yet shipping data. Lets a single embedding service (bill-text-embedding @ 1024 dims) populate any column without dim mismatch."
+      changes:
+        - sqlFile:
+            path: changes/029-unify-embeddings-to-1024.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
