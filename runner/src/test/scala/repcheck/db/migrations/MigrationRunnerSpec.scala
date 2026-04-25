@@ -100,6 +100,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         "qa_question_topics",
         "qa_answer_options",
         "qa_user_responses",
+        // Migration 026 — chunked raw bill text
+        "raw_bill_text",
       )
 
       val stmt = conn.createStatement()
@@ -171,7 +173,10 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         "idx_bill_analyses_embedding",
         "idx_bill_findings_embedding",
         "idx_bill_subjects_embedding",
-        "idx_btv_embedding",
+        // Migration 026 dropped idx_btv_embedding (and the underlying
+        // bill_text_versions.embedding column) and moved the HNSW index
+        // to raw_bill_text.embedding where chunked text embeddings live.
+        "idx_raw_bill_text_embedding",
         "idx_user_preferences_embedding",
       )
     } finally conn.close()
@@ -688,6 +693,84 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       rs.close()
       stmt.close()
       found shouldBe true
+    } finally conn.close()
+  }
+
+  it should "drop bill_text_versions.content and .embedding (migration 026)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public'
+          |  AND table_name = 'bill_text_versions'
+          |  AND column_name IN ('content', 'embedding')""".stripMargin
+      )
+      val remaining = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(_.getString("column_name"))
+        .toSet
+      rs.close()
+      stmt.close()
+      remaining shouldBe Set.empty
+    } finally conn.close()
+  }
+
+  it should "expose raw_bill_text with the expected columns (migration 026)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, is_nullable, data_type
+          |FROM information_schema.columns
+          |WHERE table_schema = 'public'
+          |  AND table_name = 'raw_bill_text'""".stripMargin
+      )
+      val columns = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map { r =>
+          val name     = r.getString("column_name")
+          val nullable = r.getString("is_nullable") == "YES"
+          val typ      = r.getString("data_type")
+          (name, nullable, typ)
+        }
+        .toList
+      rs.close()
+      stmt.close()
+
+      val byName = columns.map { case (n, nu, t) => n -> (nu, t) }.toMap
+
+      val _ = byName.keySet should contain allOf ("id", "bill_id", "version_id", "chunk_index", "content", "embedding", "created_at")
+      val _ = byName("id")._1 shouldBe false          // NOT NULL
+      val _ = byName("bill_id")._1 shouldBe false     // NOT NULL
+      val _ = byName("version_id")._1 shouldBe true   // nullable per the design
+      val _ = byName("chunk_index")._1 shouldBe false // NOT NULL
+      val _ = byName("content")._1 shouldBe false     // NOT NULL
+      val _ = byName("embedding")._1 shouldBe true    // nullable (allows inserting row before embed call completes)
+      byName("embedding")._2 shouldBe "USER-DEFINED"  // pgvector type
+    } finally conn.close()
+  }
+
+  it should "enforce (version_id, chunk_index) uniqueness on raw_bill_text only when version_id is not null (migration 026)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexname, indexdef
+          |FROM pg_indexes
+          |WHERE schemaname = 'public'
+          |  AND tablename = 'raw_bill_text'
+          |  AND indexname = 'uq_raw_bill_text_version_chunk'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("indexdef") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("UNIQUE")
+      defn should include("WHERE (version_id IS NOT NULL)")
     } finally conn.close()
   }
 

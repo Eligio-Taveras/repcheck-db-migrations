@@ -285,3 +285,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 026-raw-bill-text
+      author: repcheck
+      comment: "Create raw_bill_text table (chunked raw text + per-chunk embeddings) and drop content + embedding columns from bill_text_versions. Lets the bill-text pipeline split oversized bills into embedding-model-sized chunks instead of failing with TextContentTooLarge. bill_text_versions becomes pure metadata; raw chunks live in raw_bill_text, nullable-FK'd to the version."
+      changes:
+        - sqlFile:
+            path: changes/026-raw-bill-text.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
