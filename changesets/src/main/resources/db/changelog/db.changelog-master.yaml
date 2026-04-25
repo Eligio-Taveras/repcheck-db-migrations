@@ -296,3 +296,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 027-drop-legacy-votes-natural-key
+      author: repcheck
+      comment: "Replace the legacy uq_votes_natural_key UNIQUE (congress, chamber, roll_number) constraint with a session-aware composite UNIQUE (congress, chamber, session_number, roll_number) and tighten session_number to NOT NULL. The 3-tuple was not actually unique — Senate roll-call numbers reset each session, so re-ingesting congress 118 session 2 collided with rows from session 1 even though their string natural_keys differ. Defense in depth alongside the existing uq_votes_natural_key_pk on the TEXT natural_key column. Surfaced by the votes-pipeline duplicate-key avalanche during P6 docker-compose validation."
+      changes:
+        - sqlFile:
+            path: changes/027-drop-legacy-votes-natural-key.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
