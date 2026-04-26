@@ -1018,4 +1018,27 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  it should "add 6 new short codes to text_version_code_type enum (migration 030)" taggedAs DockerRequired in {
+    val expected = Set("EAH", "LTH", "LTS", "PRL", "RCS", "RIH")
+    val conn     = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT enumlabel
+          |FROM pg_enum e
+          |JOIN pg_type t ON t.oid = e.enumtypid
+          |WHERE t.typname = 'text_version_code_type'""".stripMargin
+      )
+      val present = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(_.getString("enumlabel"))
+        .toSet
+      rs.close()
+      stmt.close()
+      val missing = expected -- present
+      missing shouldBe Set.empty[String]
+    } finally conn.close()
+  }
+
 }

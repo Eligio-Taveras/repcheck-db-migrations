@@ -329,3 +329,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 030-expand-text-version-code-enum
+      author: repcheck
+      comment: "Third batch of additions to text_version_code_type enum — 6 short codes (EAH, LTH, LTS, PRL, RCS, RIH) surfaced empirically in the local stack when bill-text-availability-checker tried to insert text-version rows whose long-form types had no short-code mapping. Coordinated with a data-ingestion follow-up that adds the long-form → short-code mappings to TextVersionSelector.VersionTypeToCode."
+      changes:
+        - sqlFile:
+            path: changes/030-expand-text-version-code-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
