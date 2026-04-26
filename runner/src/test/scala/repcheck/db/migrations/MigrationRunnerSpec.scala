@@ -1070,6 +1070,10 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     // The column is typed as text_version_code_type so writing a known enum value should
     // succeed; writing an unknown string should fail at the DB level. This is a smoke test
     // exercising the enum binding for the new column rather than enumerating every value.
+    //
+    // Note: bill_type_enum values are lowercase (per migration 013's LOWER() normalization at
+    // lines 166-170 / 200) — using 'HR' here would fail with "invalid input value for enum
+    // bill_type_enum: HR".
     val conn = getConnection
     try {
       conn.setAutoCommit(false)
@@ -1077,13 +1081,13 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
 
       val _ = stmt.executeUpdate(
         """INSERT INTO bills (congress, bill_type, number, title, update_date, expected_text_version_code)
-          |VALUES (118, 'HR'::bill_type_enum, 7777, 'M032 expected enum smoke', NOW(), 'IH'::text_version_code_type)""".stripMargin
+          |VALUES (118, 'hr'::bill_type_enum, 7777, 'M032 expected enum smoke', NOW(), 'IH'::text_version_code_type)""".stripMargin
       )
 
       val rs = stmt.executeQuery(
         """SELECT expected_text_version_code::text AS code
           |FROM bills
-          |WHERE congress = 118 AND bill_type = 'HR' AND number = 7777""".stripMargin
+          |WHERE congress = 118 AND bill_type = 'hr' AND number = 7777""".stripMargin
       )
       val found = rs.next()
       val code  = if (found) rs.getString("code") else ""
@@ -1097,7 +1101,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       val rejected = scala.util.Try {
         val _ = stmt.executeUpdate(
           """UPDATE bills SET expected_text_version_code = 'BOGUS'::text_version_code_type
-            |WHERE congress = 118 AND bill_type = 'HR' AND number = 7777""".stripMargin
+            |WHERE congress = 118 AND bill_type = 'hr' AND number = 7777""".stripMargin
         )
       }
       conn.rollback(sp)
