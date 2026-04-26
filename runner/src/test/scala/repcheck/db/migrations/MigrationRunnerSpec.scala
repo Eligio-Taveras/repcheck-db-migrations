@@ -1041,4 +1041,78 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  it should "add bills.expected_text_version_code typed as text_version_code_type, nullable (migration 032)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT data_type, udt_name, is_nullable
+          |FROM information_schema.columns
+          |WHERE table_schema = 'public'
+          |  AND table_name = 'bills'
+          |  AND column_name = 'expected_text_version_code'""".stripMargin
+      )
+      val found    = rs.next()
+      val dataType = if (found) rs.getString("data_type") else ""
+      val udtName  = if (found) rs.getString("udt_name") else ""
+      val nullable = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      // PG enums report data_type='USER-DEFINED' with udt_name carrying the enum type name.
+      val _ = dataType shouldBe "USER-DEFINED"
+      val _ = udtName shouldBe "text_version_code_type"
+      nullable shouldBe "YES"
+    } finally conn.close()
+  }
+
+  it should "accept all known text_version_code_type values for bills.expected_text_version_code (migration 032)" taggedAs DockerRequired in {
+    // The column is typed as text_version_code_type so writing a known enum value should
+    // succeed; writing an unknown string should fail at the DB level. This is a smoke test
+    // exercising the enum binding for the new column rather than enumerating every value.
+    //
+    // Note: bill_type_enum values are lowercase (per migration 013's LOWER() normalization at
+    // lines 166-170 / 200) — using 'HR' here would fail with "invalid input value for enum
+    // bill_type_enum: HR".
+    val conn = getConnection
+    try {
+      conn.setAutoCommit(false)
+      val stmt = conn.createStatement()
+
+      val _ = stmt.executeUpdate(
+        """INSERT INTO bills (congress, bill_type, number, title, update_date, expected_text_version_code)
+          |VALUES (118, 'hr'::bill_type_enum, 7777, 'M032 expected enum smoke', NOW(), 'IH'::text_version_code_type)""".stripMargin
+      )
+
+      val rs = stmt.executeQuery(
+        """SELECT expected_text_version_code::text AS code
+          |FROM bills
+          |WHERE congress = 118 AND bill_type = 'hr' AND number = 7777""".stripMargin
+      )
+      val found = rs.next()
+      val code  = if (found) rs.getString("code") else ""
+      rs.close()
+
+      val _ = found shouldBe true
+      val _ = code shouldBe "IH"
+
+      // Unknown enum value must be rejected by the DB.
+      val sp = conn.setSavepoint("before_bad_enum")
+      val rejected = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          """UPDATE bills SET expected_text_version_code = 'BOGUS'::text_version_code_type
+            |WHERE congress = 118 AND bill_type = 'hr' AND number = 7777""".stripMargin
+        )
+      }
+      conn.rollback(sp)
+      val _ = rejected.isFailure shouldBe true
+
+      stmt.close()
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
 }

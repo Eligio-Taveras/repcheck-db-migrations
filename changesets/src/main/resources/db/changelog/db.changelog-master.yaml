@@ -340,3 +340,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 032-bills-expected-text-version-code
+      author: repcheck
+      comment: "Add bills.expected_text_version_code text_version_code_type for stage-aware text-availability checks. Two pipelines write to it cooperatively via TextVersionCode.progressionOrder regression guards: bill-metadata-pipeline floors to IH/IS from origin_chamber on every upsert, bill-summary-pipeline advances from CRS summary versionCode. bill-text-availability-checker uses it to gate /text calls (WHERE expected IS NOT NULL AND text_version_type IS DISTINCT FROM expected). No backfill — first bill-metadata sweep populates."
+      changes:
+        - sqlFile:
+            path: changes/032-bills-expected-text-version-code.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
