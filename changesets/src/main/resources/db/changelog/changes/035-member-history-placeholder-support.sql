@@ -1,0 +1,42 @@
+-- Migration 035: member_history nullable columns for placeholder support
+--
+-- Drops the NOT NULL constraints on member_history.update_date, first_name,
+-- and last_name so the MemberHistoryArchiver can archive a placeholder
+-- member row (whose every profile field is NULL by the canonical
+-- HasPlaceholder[MemberDO].placeholder() shape) into history.
+--
+-- Mirrors migration 034 for the bills side. Same root cause, same fix:
+--   bill_history.update_date  -> NULL allowed (migration 034)
+--   member_history.update_date  -> NULL allowed (this migration)
+--   member_history.first_name -> NULL allowed
+--   member_history.last_name  -> NULL allowed
+--
+-- The audit log should record EVERY state transition for a member, including
+-- the placeholder->real promotion that happens when a sponsorship reference
+-- in bill-metadata-pipeline first surfaces a member and member-profile-
+-- pipeline later enriches it. Earlier the archiver short-circuited
+-- placeholders via `WHERE update_date IS NOT NULL` in its existence query;
+-- the companion data-ingestion PR drops that clause so all transitions are
+-- archived. Without this migration, the INSERT into member_history would
+-- fail with `null value in column "update_date" violates not-null
+-- constraint` on the first placeholder enrichment.
+--
+-- The members table itself (live records) already allows NULL update_date
+-- (per migration 012 §1, "Relax NOT NULL constraints for placeholder
+-- support"). member_history was missed at the time, just like bill_history
+-- was missed and fixed in 034.
+--
+-- Why first_name and last_name need the change too:
+--   The archiver writes `INSERT INTO member_history SELECT ... FROM members`
+--   which copies ALL columns from members to member_history. members.first_
+--   name and members.last_name are already NULL-able for placeholders;
+--   member_history must accept the same NULLs.
+--
+-- Pairs with: data-ingestion test PR <pending> ("test(members): pin
+-- metadata->profile placeholder round-trip + drop placeholder-skip in
+-- DoobieMemberHistoryArchiver") and the in-DB ALTER applied as a one-shot
+-- on the dev AlloyDB during round-trip development.
+
+ALTER TABLE member_history ALTER COLUMN update_date DROP NOT NULL;
+ALTER TABLE member_history ALTER COLUMN first_name  DROP NOT NULL;
+ALTER TABLE member_history ALTER COLUMN last_name   DROP NOT NULL;

@@ -372,4 +372,14 @@ databaseChangeLog:
             path: changes/034-bill-history-update-date-nullable.sql
             relativeToChangelogFile: true
             splitStatements: true
+
+  - changeSet:
+      id: 035-member-history-placeholder-support
+      author: repcheck
+      comment: "Drop NOT NULL on member_history.update_date, first_name, and last_name so MemberHistoryArchiver can archive placeholder members (every Option detail field NULL per the canonical HasPlaceholder[MemberDO].placeholder() shape). Members table itself was already nullable (migration 012 §1); member_history was missed. Mirrors migration 034 for the bill side. Pairs with the data-ingestion change that drops the placeholder-skip clause from DoobieMemberHistoryArchiver — every state transition (including placeholder→real) gets an audit row."
+      changes:
+        - sqlFile:
+            path: changes/035-member-history-placeholder-support.sql
+            relativeToChangelogFile: true
+            splitStatements: true
             stripComments: false
