@@ -383,3 +383,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 036-member-history-current-party-state-nullable
+      author: repcheck
+      comment: "Follow-on to 035: drop NOT NULL on member_history.current_party and state. The asymmetry between members (both nullable since migration 012) and member_history (both NOT NULL) was the second blocker for the placeholder→real archive path. Verified via information_schema diff that members and member_history nullability now match exactly across every column."
+      changes:
+        - sqlFile:
+            path: changes/036-member-history-current-party-state-nullable.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
