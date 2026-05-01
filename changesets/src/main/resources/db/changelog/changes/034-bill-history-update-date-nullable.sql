@@ -1,0 +1,34 @@
+-- Migration 034: bill_history.update_date NULL support
+--
+-- Drops the NOT NULL constraint on bill_history.update_date so the
+-- BillHistoryArchiver can archive a placeholder row whose update_date is
+-- itself NULL (the canonical placeholder shape per
+-- HasPlaceholder[BillDO].placeholder()).
+--
+-- Why this is needed:
+--   bills.update_date was already NULL-able (see migration 012 §1, "Relax
+--   NOT NULL constraints for placeholder support") because placeholder rows
+--   created by upstream pipelines (bill-text-availability-checker,
+--   bill-summary-pipeline, votes-pipeline via DoobieBillRepository
+--   .upsertPlaceholder) leave the API-sourced update_date NULL until the
+--   metadata pipeline backfills the row.
+--
+--   bill_history was missed at the time. It still requires update_date NOT
+--   NULL, which means BillPersister.persistBill cannot run its archive-then-
+--   upsert cycle on a placeholder row: the archive step (copy the existing
+--   row to bill_history before overwriting) hits the NOT NULL constraint and
+--   the whole transaction aborts. Empirically observed in the dev DB —
+--   161,721 placeholder rows are blocked from enrichment for this reason.
+--
+-- Why it's safe:
+--   bill_history is the audit-log mirror of bills. If bills can hold a NULL
+--   update_date for a row, bill_history must be able to record that exact
+--   row state — otherwise the history is lossy. There are no FKs or queries
+--   that depend on bill_history.update_date being non-NULL (idx_bill_history_*
+--   indexes are on archived_at and bill_id).
+--
+-- Pairs with: data-ingestion PR #103 (drop NOW() stub from upsertPlaceholder),
+-- ingestion-common PR #29 (SortOrder URL-encoding fix), and the in-DB
+-- repair script that NULLed out update_date on existing placeholder rows.
+
+ALTER TABLE bill_history ALTER COLUMN update_date DROP NOT NULL;

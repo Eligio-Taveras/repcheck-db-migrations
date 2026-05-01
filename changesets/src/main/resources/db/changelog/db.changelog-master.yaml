@@ -362,3 +362,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 034-bill-history-update-date-nullable
+      author: repcheck
+      comment: "Drop NOT NULL on bill_history.update_date so the BillHistoryArchiver can copy a placeholder bill row (whose update_date is itself NULL per the canonical HasPlaceholder[BillDO].placeholder() shape) into history without violating the constraint. bills.update_date was already nullable (migration 012); bill_history was missed at the time. Empirically: 161,721 placeholder rows in dev DB are blocked from metadata-pipeline enrichment because the archive step in BillPersister.persistBill aborts the transaction before the upsert can run."
+      changes:
+        - sqlFile:
+            path: changes/034-bill-history-update-date-nullable.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
