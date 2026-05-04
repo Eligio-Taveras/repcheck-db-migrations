@@ -394,3 +394,47 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 037-amendment-version-type-codes-enum
+      author: repcheck
+      comment: "Add amendment text-version codes (Submitted, Modified) to text_version_code_type and HTML to format_type_enum so the amendments-pipeline (Component 7) can write amendment_text_versions rows whose version_type_code / format_type values come straight from AmendmentTextItemDTO + AmendmentFormatDTO (shared-models PR #44). Must commit before migrations 038-040 reference these values."
+      changes:
+        - sqlFile:
+            path: changes/037-amendment-version-type-codes-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 038-amendments-ingestion-columns
+      author: repcheck
+      comment: "Align amendments table with AmendmentDO (shared-models PR #44): add proposed_date, latest_action_time, parent_amendment_id (self-FK), effective_bill_id (FK -> bills), last_text_check_at; widen number INT->TEXT; tighten chamber to NOT NULL with defensive backfill from amendment_type. Non-destructive: legacy denormalized text fields (text_url, text_format, text_version_type, text_date, text_content, latest_text_version_id) are LEFT IN PLACE for follow-up deprecation."
+      changes:
+        - sqlFile:
+            path: changes/038-amendments-ingestion-columns.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 039-amendment-text-versions-ingestion-columns
+      author: repcheck
+      comment: "Add ingestion columns to amendment_text_versions (source_url, download_url, version_type_code, published_date, text_length) for the amendments-pipeline. Cohabitation: legacy columns version_type / version_date / url / content stay in place to be deprecated after consumer migration. Depends on migration 037 for the new text_version_code_type values."
+      changes:
+        - sqlFile:
+            path: changes/039-amendment-text-versions-ingestion-columns.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 040-amendment-text-chunks
+      author: repcheck
+      comment: "Create amendment_text_chunks — mirror of raw_bill_text (migration 026) for the amendments-pipeline. Chunked amendment text + per-chunk vector(1024) embeddings, HNSW cosine index. Purely additive (no existing table to migrate). pgvector / hnsw already enabled."
+      changes:
+        - sqlFile:
+            path: changes/040-amendment-text-chunks.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
