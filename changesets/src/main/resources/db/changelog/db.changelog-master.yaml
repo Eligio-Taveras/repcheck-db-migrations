@@ -398,7 +398,7 @@ databaseChangeLog:
   - changeSet:
       id: 037-amendment-version-type-codes-enum
       author: repcheck
-      comment: "Add amendment text-version codes (Submitted, Modified) to text_version_code_type and HTML to format_type_enum so the amendments-pipeline (Component 7) can write amendment_text_versions rows whose version_type_code / format_type values come straight from AmendmentTextItemDTO + AmendmentFormatDTO (shared-models PR #44). Must commit before migrations 038-040 reference these values."
+      comment: "Create dedicated amendment_text_version_code_type enum ('Submitted', 'Modified') per plan §L3 — keeps the amendment value space separated from the bill-side text_version_code_type. No format_type_enum addition; pipeline DTO layer maps Congress.gov 'HTML' to existing 'Formatted Text'. Must commit before migration 039 references the new enum."
       changes:
         - sqlFile:
             path: changes/037-amendment-version-type-codes-enum.sql
@@ -409,7 +409,7 @@ databaseChangeLog:
   - changeSet:
       id: 038-amendments-ingestion-columns
       author: repcheck
-      comment: "Align amendments table with AmendmentDO (shared-models PR #44): add proposed_date, latest_action_time, parent_amendment_id (self-FK), effective_bill_id (FK -> bills), last_text_check_at; widen number INT->TEXT; tighten chamber to NOT NULL with defensive backfill from amendment_type. Non-destructive: legacy denormalized text fields (text_url, text_format, text_version_type, text_date, text_content, latest_text_version_id) are LEFT IN PLACE for follow-up deprecation."
+      comment: "Align amendments table with AmendmentDO (shared-models PR #44): add latest_action_time, parent_amendment_id (self-FK), last_text_check_at; widen number INT->TEXT; tighten chamber to NOT NULL with defensive backfill from amendment_type. bill_id stores the resolved ancestor bill (one column per concept — no separate effective_bill_id). Non-destructive: legacy denormalized text fields (text_url, text_format, text_version_type, text_date, text_content, latest_text_version_id) are LEFT IN PLACE for follow-up deprecation."
       changes:
         - sqlFile:
             path: changes/038-amendments-ingestion-columns.sql
@@ -420,7 +420,7 @@ databaseChangeLog:
   - changeSet:
       id: 039-amendment-text-versions-ingestion-columns
       author: repcheck
-      comment: "Add ingestion columns to amendment_text_versions (source_url, download_url, version_type_code, published_date, text_length) for the amendments-pipeline. Cohabitation: legacy columns version_type / version_date / url / content stay in place to be deprecated after consumer migration. Depends on migration 037 for the new text_version_code_type values."
+      comment: "Add genuinely new ingestion columns to amendment_text_versions (download_url, text_length) for the amendments-pipeline. Reuses existing columns instead of duplicating: url (source URL), version_date, format_type, fetched_at. Converts the existing version_type TEXT column to the dedicated amendment_text_version_code_type enum (created in migration 037). Adds partial indexes on fetched_at to drive the availability scheduler. Table has 0 rows everywhere so the cast is trivial."
       changes:
         - sqlFile:
             path: changes/039-amendment-text-versions-ingestion-columns.sql

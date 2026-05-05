@@ -14,15 +14,24 @@
 --   * congress               (Int)                   → existing `congress`
 --   * amendmentType          (Option[AmendmentType]) → existing `amendment_type` (still NOT NULL — DO is Option but live table is stricter; leaving the constraint alone is safe because both ingestion paths produce a value)
 --   * number                 (String)                → existing `number INT` widened to TEXT (live table has 0 rows; DO contract is String for both bills and amendments)
---   * billId                 (Option[Long])          → existing `bill_id`
+--   * billId                 (Option[Long])          → existing `bill_id` — populated with the RESOLVED ANCESTOR bill at ingest time (computed by walking parent_amendment_id chain). One column, one meaning.
 --   * chamber                (Chamber, NOT NULL)     → existing `chamber chamber_type` tightened to NOT NULL (live table currently nullable; AmendmentDO PR #44 made it required)
 --   * description, purpose, sponsorMemberId, submittedDate, latestActionDate, latestActionText, updateDate, apiUrl → existing columns
---   * proposedDate           (Option[LocalDate])     → NEW `proposed_date DATE`
 --   * latestActionTime       (Option[String])        → NEW `latest_action_time TEXT`
---   * parentAmendmentId      (Option[Long])          → NEW `parent_amendment_id BIGINT REFERENCES amendments(id)` (sub-amendment chain)
---   * effectiveBillId        (Option[Long])          → NEW `effective_bill_id BIGINT REFERENCES bills(id)` (resolved-through-parent bill, computed by AmendmentProcessor step 9 per PR #44)
+--   * parentAmendmentId      (Option[Long])          → NEW `parent_amendment_id BIGINT REFERENCES amendments(id)` (sub-amendment chain — tracks the IMMEDIATE parent only; the ancestor bill is recorded directly on bill_id)
 --   * lastTextCheckAt        (Option[Instant])       → NEW `last_text_check_at TIMESTAMPTZ` (set on successful text check per §7.5)
 --   * createdAt, updatedAt   → existing columns
+--
+-- Note: there is NO `proposed_date` column. The Congress.gov AmendmentNumber
+-- schema has only `submittedDate` + `updateDate` (verified against
+-- docs/reference/congress-gov-api.yaml). The shared-models PR #44 was revised
+-- in parallel to drop `proposedDate` from AmendmentDO.
+--
+-- Note: there is NO `effective_bill_id` column. The earlier draft introduced
+-- both `bill_id` (immediate parent's bill) and `effective_bill_id` (resolved
+-- ancestor); these were functionally redundant. The simplified design uses
+-- `bill_id` for the resolved ancestor and `parent_amendment_id` for the
+-- immediate amendment parent. One column per concept.
 --
 -- Liquibase tracks changesets by ID and guarantees single execution, so each
 -- statement runs exactly once. ADD COLUMN uses IF NOT EXISTS as a defensive
@@ -33,25 +42,19 @@
 -- 1. Add new columns
 -- ===========================================================================
 
-ALTER TABLE amendments ADD COLUMN IF NOT EXISTS proposed_date         DATE;
 ALTER TABLE amendments ADD COLUMN IF NOT EXISTS latest_action_time    TEXT;
 ALTER TABLE amendments ADD COLUMN IF NOT EXISTS parent_amendment_id   BIGINT;
-ALTER TABLE amendments ADD COLUMN IF NOT EXISTS effective_bill_id     BIGINT;
 ALTER TABLE amendments ADD COLUMN IF NOT EXISTS last_text_check_at    TIMESTAMPTZ;
 
-COMMENT ON COLUMN amendments.proposed_date IS
-    'Date the amendment was proposed on the floor. Distinct from submitted_date (when the amendment was filed). Per AmendmentDetailDTO.proposedDate (Congress.gov /amendment/{c}/{t}/{n}).';
 COMMENT ON COLUMN amendments.latest_action_time IS
     'Time-of-day component of the latest action (e.g., "14:30:00"), kept as a raw string. Pairs with latest_action_date. Per LatestActionDTO.actionTime added in shared-models PR #44.';
 COMMENT ON COLUMN amendments.parent_amendment_id IS
-    'FK to amendments(id) when this row is an amendment-to-an-amendment (Senate floor sub-amendments). NULL for top-level amendments. Resolved by AmendmentProcessor walking AmendedAmendmentDTO references.';
-COMMENT ON COLUMN amendments.effective_bill_id IS
-    'FK to bills(id) — the bill this amendment ultimately modifies, walking through any parent_amendment_id chain. Equals bill_id for top-level amendments; for sub-amendments, equals the parent (or grandparent, ...) amendment''s effective_bill_id. Computed by AmendmentProcessor step 9.';
+    'FK to amendments(id) when this row is an amendment-to-an-amendment (Senate floor sub-amendments). NULL for top-level amendments. Tracks the IMMEDIATE parent only — the resolved ancestor bill is recorded directly on bill_id.';
 COMMENT ON COLUMN amendments.last_text_check_at IS
     'Timestamp of the most recent successful amendment-text-availability check. NULL until the text pipeline has confirmed at least one text version exists. Drives text-poll scheduling per §7.5.';
 
 -- ===========================================================================
--- 2. Add foreign keys for the new linkage columns
+-- 2. Add foreign key for the new linkage column
 -- ===========================================================================
 
 -- Self-referential FK for parent_amendment_id (sub-amendment chain).
@@ -59,15 +62,8 @@ ALTER TABLE amendments
     ADD CONSTRAINT amendments_parent_amendment_id_fkey
     FOREIGN KEY (parent_amendment_id) REFERENCES amendments(id);
 
--- FK to bills(id) for effective_bill_id.
-ALTER TABLE amendments
-    ADD CONSTRAINT amendments_effective_bill_id_fkey
-    FOREIGN KEY (effective_bill_id) REFERENCES bills(id);
-
 CREATE INDEX IF NOT EXISTS idx_amendments_parent_amendment_id
     ON amendments (parent_amendment_id) WHERE parent_amendment_id IS NOT NULL;
-CREATE INDEX IF NOT EXISTS idx_amendments_effective_bill_id
-    ON amendments (effective_bill_id) WHERE effective_bill_id IS NOT NULL;
 
 -- ===========================================================================
 -- 3. Widen amendments.number INT -> TEXT to match AmendmentDO.number: String

@@ -1116,10 +1116,27 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
   }
 
   // ---------------------------------------------------------------------------
-  // Migration 037 — amendment text-version codes + HTML format
+  // Migration 037 — dedicated amendment_text_version_code_type enum (per plan §L3)
   // ---------------------------------------------------------------------------
 
-  it should "add 'Submitted' and 'Modified' to text_version_code_type (migration 037)" taggedAs DockerRequired in {
+  it should "create dedicated amendment_text_version_code_type enum with Submitted/Modified (migration 037)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT enumlabel FROM pg_enum
+          |WHERE enumtypid = 'amendment_text_version_code_type'::regtype
+          |ORDER BY enumsortorder""".stripMargin
+      )
+      val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toList
+      rs.close()
+      stmt.close()
+      labels shouldBe List("Submitted", "Modified")
+    } finally conn.close()
+  }
+
+  it should "NOT add 'Submitted'/'Modified' to bill-side text_version_code_type (migration 037 §L3 separation)" taggedAs DockerRequired in {
+    // Plan §L3: amendment codes live in their own enum, NOT co-mingled with bill codes.
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1131,11 +1148,11 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toSet
       rs.close()
       stmt.close()
-      labels shouldBe Set("Submitted", "Modified")
+      labels shouldBe Set.empty
     } finally conn.close()
   }
 
-  it should "add 'HTML' to format_type_enum (migration 037)" taggedAs DockerRequired in {
+  it should "NOT add 'HTML' to format_type_enum (migration 037 — DTO layer maps to 'Formatted Text')" taggedAs DockerRequired in {
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1147,7 +1164,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       val found = rs.next()
       rs.close()
       stmt.close()
-      found shouldBe true
+      found shouldBe false
     } finally conn.close()
   }
 
@@ -1155,7 +1172,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
   // Migration 038 — amendments ingestion columns
   // ---------------------------------------------------------------------------
 
-  it should "add proposed_date / latest_action_time / parent_amendment_id / effective_bill_id / last_text_check_at to amendments (migration 038)" taggedAs DockerRequired in {
+  it should "add latest_action_time / parent_amendment_id / last_text_check_at to amendments (migration 038)" taggedAs DockerRequired in {
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1163,8 +1180,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         """SELECT column_name, data_type, is_nullable
           |FROM information_schema.columns
           |WHERE table_schema = 'public' AND table_name = 'amendments'
-          |  AND column_name IN ('proposed_date', 'latest_action_time',
-          |                      'parent_amendment_id', 'effective_bill_id',
+          |  AND column_name IN ('latest_action_time',
+          |                      'parent_amendment_id',
           |                      'last_text_check_at')""".stripMargin
       )
       val cols = Iterator
@@ -1176,17 +1193,31 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       stmt.close()
 
       val _ = cols.keySet shouldBe Set(
-        "proposed_date",
         "latest_action_time",
         "parent_amendment_id",
-        "effective_bill_id",
         "last_text_check_at",
       )
-      val _ = cols("proposed_date") shouldBe ("date", "YES")
       val _ = cols("latest_action_time") shouldBe ("text", "YES")
       val _ = cols("parent_amendment_id") shouldBe ("bigint", "YES")
-      val _ = cols("effective_bill_id") shouldBe ("bigint", "YES")
       cols("last_text_check_at") shouldBe ("timestamp with time zone", "YES")
+    } finally conn.close()
+  }
+
+  it should "NOT add proposed_date or effective_bill_id to amendments (migration 038 — dropped after review)" taggedAs DockerRequired in {
+    // proposed_date: not in Congress.gov AmendmentNumber schema (only submittedDate + updateDate exist).
+    // effective_bill_id: redundant with bill_id, which now stores the resolved ancestor bill directly.
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendments'
+          |  AND column_name IN ('proposed_date', 'effective_bill_id')""".stripMargin
+      )
+      val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
+      rs.close()
+      stmt.close()
+      present shouldBe Set.empty
     } finally conn.close()
   }
 
@@ -1226,7 +1257,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
-  it should "add self-FK on amendments.parent_amendment_id and FK on effective_bill_id (migration 038)" taggedAs DockerRequired in {
+  it should "add self-FK on amendments.parent_amendment_id (migration 038)" taggedAs DockerRequired in {
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1235,16 +1266,30 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
           |FROM pg_constraint
           |WHERE conrelid = 'public.amendments'::regclass
           |  AND contype = 'f'
-          |  AND conname IN ('amendments_parent_amendment_id_fkey',
-          |                  'amendments_effective_bill_id_fkey')""".stripMargin
+          |  AND conname = 'amendments_parent_amendment_id_fkey'""".stripMargin
       )
       val fks =
         Iterator.continually(rs).takeWhile(_.next()).map(r => r.getString("conname") -> r.getString("ref")).toMap
       rs.close()
       stmt.close()
 
-      val _ = fks("amendments_parent_amendment_id_fkey") shouldBe "amendments"
-      fks("amendments_effective_bill_id_fkey") shouldBe "bills"
+      fks("amendments_parent_amendment_id_fkey") shouldBe "amendments"
+    } finally conn.close()
+  }
+
+  it should "NOT create amendments_effective_bill_id_fkey (migration 038 — column dropped)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname FROM pg_constraint
+          |WHERE conrelid = 'public.amendments'::regclass
+          |  AND conname = 'amendments_effective_bill_id_fkey'""".stripMargin
+      )
+      val found = rs.next()
+      rs.close()
+      stmt.close()
+      found shouldBe false
     } finally conn.close()
   }
 
@@ -1278,7 +1323,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
   // Migration 039 — amendment_text_versions ingestion columns
   // ---------------------------------------------------------------------------
 
-  it should "add source_url / download_url / version_type_code / published_date / text_length to amendment_text_versions (migration 039)" taggedAs DockerRequired in {
+  it should "add download_url and text_length to amendment_text_versions (migration 039)" taggedAs DockerRequired in {
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1286,8 +1331,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         """SELECT column_name, data_type, udt_name, is_nullable
           |FROM information_schema.columns
           |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
-          |  AND column_name IN ('source_url', 'download_url', 'version_type_code',
-          |                      'published_date', 'text_length')""".stripMargin
+          |  AND column_name IN ('download_url', 'text_length')""".stripMargin
       )
       val cols = Iterator
         .continually(rs)
@@ -1303,25 +1347,56 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       rs.close()
       stmt.close()
 
-      val _ = cols.keySet shouldBe Set(
-        "source_url",
-        "download_url",
-        "version_type_code",
-        "published_date",
-        "text_length",
-      )
-      val _ = cols("source_url")._1 shouldBe "text"
+      val _ = cols.keySet shouldBe Set("download_url", "text_length")
       val _ = cols("download_url")._1 shouldBe "text"
-      // version_type_code is a user-defined enum; udt_name surfaces the enum type name.
-      val _ = cols("version_type_code")._2 shouldBe "text_version_code_type"
-      val _ = cols("published_date")._1 shouldBe "date"
       val _ = cols("text_length")._1 shouldBe "integer"
-      // All new columns nullable.
+      // Both new columns nullable.
       cols.values.map(_._3).toSet shouldBe Set("YES")
     } finally conn.close()
   }
 
-  it should "preserve legacy amendment_text_versions columns (cohabitation, migration 039)" taggedAs DockerRequired in {
+  it should "NOT add source_url / version_type_code / published_date to amendment_text_versions (migration 039 — duplicates dropped)" taggedAs DockerRequired in {
+    // Each duplicates an existing column from migration 007:
+    //   source_url        ↔ url
+    //   version_type_code ↔ version_type (now retyped to amendment_text_version_code_type)
+    //   published_date    ↔ version_date
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
+          |  AND column_name IN ('source_url', 'version_type_code', 'published_date')""".stripMargin
+      )
+      val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
+      rs.close()
+      stmt.close()
+      present shouldBe Set.empty
+    } finally conn.close()
+  }
+
+  it should "convert version_type to dedicated amendment_text_version_code_type enum (migration 039)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT data_type, udt_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
+          |  AND column_name = 'version_type'""".stripMargin
+      )
+      val found    = rs.next()
+      val dataType = if (found) rs.getString("data_type") else ""
+      val udtName  = if (found) rs.getString("udt_name") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      // User-defined enum surfaces as USER-DEFINED with udt_name = enum type.
+      val _ = dataType shouldBe "USER-DEFINED"
+      udtName shouldBe "amendment_text_version_code_type"
+    } finally conn.close()
+  }
+
+  it should "preserve existing amendment_text_versions columns (migration 039)" taggedAs DockerRequired in {
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1334,6 +1409,31 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       rs.close()
       stmt.close()
       present shouldBe Set("version_type", "version_date", "url", "content", "format_type", "fetched_at")
+    } finally conn.close()
+  }
+
+  it should "create partial indexes on amendment_text_versions.fetched_at (migration 039)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexname, indexdef FROM pg_indexes
+          |WHERE schemaname = 'public'
+          |  AND tablename = 'amendment_text_versions'
+          |  AND indexname IN ('idx_amendment_text_versions_fetched_null',
+          |                    'idx_amendment_text_versions_fetched_not_null')""".stripMargin
+      )
+      val idx =
+        Iterator.continually(rs).takeWhile(_.next()).map(r => r.getString("indexname") -> r.getString("indexdef")).toMap
+      rs.close()
+      stmt.close()
+
+      val _ = idx.keySet shouldBe Set(
+        "idx_amendment_text_versions_fetched_null",
+        "idx_amendment_text_versions_fetched_not_null",
+      )
+      val _ = idx("idx_amendment_text_versions_fetched_null") should include("WHERE (fetched_at IS NULL)")
+      idx("idx_amendment_text_versions_fetched_not_null") should include("WHERE (fetched_at IS NOT NULL)")
     } finally conn.close()
   }
 
