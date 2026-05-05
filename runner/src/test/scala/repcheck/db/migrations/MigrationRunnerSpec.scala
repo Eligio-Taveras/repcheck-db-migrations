@@ -1115,4 +1115,457 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // Migration 037 — dedicated amendment_text_version_code_type enum (per plan §L3)
+  // ---------------------------------------------------------------------------
+
+  it should "create dedicated amendment_text_version_code_type enum with Submitted/Modified (migration 037)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT enumlabel FROM pg_enum
+          |WHERE enumtypid = 'amendment_text_version_code_type'::regtype
+          |ORDER BY enumsortorder""".stripMargin
+      )
+      val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toList
+      rs.close()
+      stmt.close()
+      labels shouldBe List("Submitted", "Modified")
+    } finally conn.close()
+  }
+
+  it should "NOT add 'Submitted'/'Modified' to bill-side text_version_code_type (migration 037 §L3 separation)" taggedAs DockerRequired in {
+    // Plan §L3: amendment codes live in their own enum, NOT co-mingled with bill codes.
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT enumlabel FROM pg_enum
+          |WHERE enumtypid = 'text_version_code_type'::regtype
+          |  AND enumlabel IN ('Submitted', 'Modified')""".stripMargin
+      )
+      val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toSet
+      rs.close()
+      stmt.close()
+      labels shouldBe Set.empty
+    } finally conn.close()
+  }
+
+  it should "NOT add 'HTML' to format_type_enum (migration 037 — DTO layer maps to 'Formatted Text')" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT enumlabel FROM pg_enum
+          |WHERE enumtypid = 'format_type_enum'::regtype
+          |  AND enumlabel = 'HTML'""".stripMargin
+      )
+      val found = rs.next()
+      rs.close()
+      stmt.close()
+      found shouldBe false
+    } finally conn.close()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Migration 038 — amendments ingestion columns
+  // ---------------------------------------------------------------------------
+
+  it should "add proposed_date / latest_action_time / parent_amendment_id / last_text_check_at to amendments (migration 038)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, data_type, is_nullable
+          |FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendments'
+          |  AND column_name IN ('proposed_date',
+          |                      'latest_action_time',
+          |                      'parent_amendment_id',
+          |                      'last_text_check_at')""".stripMargin
+      )
+      val cols = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r => r.getString("column_name") -> (r.getString("data_type"), r.getString("is_nullable")))
+        .toMap
+      rs.close()
+      stmt.close()
+
+      val _ = cols.keySet shouldBe Set(
+        "proposed_date",
+        "latest_action_time",
+        "parent_amendment_id",
+        "last_text_check_at",
+      )
+      val _ = cols("proposed_date") shouldBe ("date", "YES")
+      val _ = cols("latest_action_time") shouldBe ("text", "YES")
+      val _ = cols("parent_amendment_id") shouldBe ("bigint", "YES")
+      cols("last_text_check_at") shouldBe ("timestamp with time zone", "YES")
+    } finally conn.close()
+  }
+
+  it should "NOT add effective_bill_id to amendments (migration 038 — dropped after review)" taggedAs DockerRequired in {
+    // effective_bill_id: redundant with bill_id, which now stores the resolved ancestor bill directly.
+    // (proposed_date WAS dropped in an earlier revision of this PR, then restored after live-API
+    // verification 2026-05-05 confirmed Congress.gov returns proposedDate despite its absence
+    // from the openapi yaml — see migration 038 leading comment block.)
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendments'
+          |  AND column_name = 'effective_bill_id'""".stripMargin
+      )
+      val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
+      rs.close()
+      stmt.close()
+      present shouldBe Set.empty
+    } finally conn.close()
+  }
+
+  it should "widen amendments.number to TEXT (migration 038)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT data_type, is_nullable FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendments' AND column_name = 'number'""".stripMargin
+      )
+      val found    = rs.next()
+      val dataType = if (found) rs.getString("data_type") else ""
+      val nullable = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = dataType shouldBe "text"
+      nullable shouldBe "NO"
+    } finally conn.close()
+  }
+
+  it should "tighten amendments.chamber to NOT NULL (migration 038)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT is_nullable FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendments' AND column_name = 'chamber'""".stripMargin
+      )
+      val found    = rs.next()
+      val nullable = if (found) rs.getString("is_nullable") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      nullable shouldBe "NO"
+    } finally conn.close()
+  }
+
+  it should "add self-FK on amendments.parent_amendment_id (migration 038)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname, confrelid::regclass::text AS ref
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.amendments'::regclass
+          |  AND contype = 'f'
+          |  AND conname = 'amendments_parent_amendment_id_fkey'""".stripMargin
+      )
+      val fks =
+        Iterator.continually(rs).takeWhile(_.next()).map(r => r.getString("conname") -> r.getString("ref")).toMap
+      rs.close()
+      stmt.close()
+
+      fks("amendments_parent_amendment_id_fkey") shouldBe "amendments"
+    } finally conn.close()
+  }
+
+  it should "NOT create amendments_effective_bill_id_fkey (migration 038 — column dropped)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname FROM pg_constraint
+          |WHERE conrelid = 'public.amendments'::regclass
+          |  AND conname = 'amendments_effective_bill_id_fkey'""".stripMargin
+      )
+      val found = rs.next()
+      rs.close()
+      stmt.close()
+      found shouldBe false
+    } finally conn.close()
+  }
+
+  it should "preserve legacy amendments text fields (cohabitation, migration 038)" taggedAs DockerRequired in {
+    // Migration 038 explicitly does NOT drop the pre-existing denormalized text columns
+    // on amendments. They are deprecated but kept until a follow-up after consumers move.
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendments'
+          |  AND column_name IN ('text_url', 'text_format', 'text_version_type',
+          |                      'text_date', 'text_content', 'latest_text_version_id')""".stripMargin
+      )
+      val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
+      rs.close()
+      stmt.close()
+      present shouldBe Set(
+        "text_url",
+        "text_format",
+        "text_version_type",
+        "text_date",
+        "text_content",
+        "latest_text_version_id",
+      )
+    } finally conn.close()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Migration 039 — amendment_text_versions ingestion columns
+  // ---------------------------------------------------------------------------
+
+  it should "add download_url and text_length to amendment_text_versions (migration 039)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, data_type, udt_name, is_nullable
+          |FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
+          |  AND column_name IN ('download_url', 'text_length')""".stripMargin
+      )
+      val cols = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r =>
+          r.getString("column_name") -> (
+            r.getString("data_type"),
+            r.getString("udt_name"),
+            r.getString("is_nullable")
+          )
+        )
+        .toMap
+      rs.close()
+      stmt.close()
+
+      val _ = cols.keySet shouldBe Set("download_url", "text_length")
+      val _ = cols("download_url")._1 shouldBe "text"
+      val _ = cols("text_length")._1 shouldBe "integer"
+      // Both new columns nullable.
+      cols.values.map(_._3).toSet shouldBe Set("YES")
+    } finally conn.close()
+  }
+
+  it should "NOT add source_url / version_type_code / published_date to amendment_text_versions (migration 039 — duplicates dropped)" taggedAs DockerRequired in {
+    // Each duplicates an existing column from migration 007:
+    //   source_url        ↔ url
+    //   version_type_code ↔ version_type (now retyped to amendment_text_version_code_type)
+    //   published_date    ↔ version_date
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
+          |  AND column_name IN ('source_url', 'version_type_code', 'published_date')""".stripMargin
+      )
+      val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
+      rs.close()
+      stmt.close()
+      present shouldBe Set.empty
+    } finally conn.close()
+  }
+
+  it should "convert version_type to dedicated amendment_text_version_code_type enum (migration 039)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT data_type, udt_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
+          |  AND column_name = 'version_type'""".stripMargin
+      )
+      val found    = rs.next()
+      val dataType = if (found) rs.getString("data_type") else ""
+      val udtName  = if (found) rs.getString("udt_name") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      // User-defined enum surfaces as USER-DEFINED with udt_name = enum type.
+      val _ = dataType shouldBe "USER-DEFINED"
+      udtName shouldBe "amendment_text_version_code_type"
+    } finally conn.close()
+  }
+
+  it should "preserve existing amendment_text_versions columns (migration 039)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_versions'
+          |  AND column_name IN ('version_type', 'version_date', 'url', 'content', 'format_type', 'fetched_at')""".stripMargin
+      )
+      val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
+      rs.close()
+      stmt.close()
+      present shouldBe Set("version_type", "version_date", "url", "content", "format_type", "fetched_at")
+    } finally conn.close()
+  }
+
+  it should "create partial indexes on amendment_text_versions.fetched_at (migration 039)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexname, indexdef FROM pg_indexes
+          |WHERE schemaname = 'public'
+          |  AND tablename = 'amendment_text_versions'
+          |  AND indexname IN ('idx_amendment_text_versions_fetched_null',
+          |                    'idx_amendment_text_versions_fetched_not_null')""".stripMargin
+      )
+      val idx =
+        Iterator.continually(rs).takeWhile(_.next()).map(r => r.getString("indexname") -> r.getString("indexdef")).toMap
+      rs.close()
+      stmt.close()
+
+      val _ = idx.keySet shouldBe Set(
+        "idx_amendment_text_versions_fetched_null",
+        "idx_amendment_text_versions_fetched_not_null",
+      )
+      val _ = idx("idx_amendment_text_versions_fetched_null") should include("WHERE (fetched_at IS NULL)")
+      idx("idx_amendment_text_versions_fetched_not_null") should include("WHERE (fetched_at IS NOT NULL)")
+    } finally conn.close()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Migration 040 — amendment_text_chunks
+  // ---------------------------------------------------------------------------
+
+  it should "create amendment_text_chunks with the expected columns (migration 040)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, data_type, is_nullable, udt_name
+          |FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'amendment_text_chunks'""".stripMargin
+      )
+      val cols = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r =>
+          r.getString("column_name") -> (
+            r.getString("data_type"),
+            r.getString("is_nullable") == "YES",
+            r.getString("udt_name")
+          )
+        )
+        .toMap
+      rs.close()
+      stmt.close()
+
+      val _ = cols.keySet should contain allOf (
+        "id",
+        "amendment_id",
+        "version_id",
+        "chunk_index",
+        "content",
+        "embedding",
+        "created_at"
+      )
+      val _ = cols("amendment_id")._2 shouldBe false // NOT NULL
+      val _ = cols("version_id")._2 shouldBe true    // nullable (mirrors raw_bill_text)
+      val _ = cols("chunk_index")._2 shouldBe false
+      val _ = cols("content")._2 shouldBe false
+      val _ = cols("embedding")._2 shouldBe true     // nullable for retry-safety
+      val _ = cols("embedding")._1 shouldBe "USER-DEFINED"
+      cols("embedding")._3 shouldBe "vector"
+    } finally conn.close()
+  }
+
+  it should "size amendment_text_chunks.embedding to vector(1024) (migration 040)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT format_type(a.atttypid, a.atttypmod) AS rendered_type
+          |FROM pg_attribute a
+          |WHERE a.attrelid = 'public.amendment_text_chunks'::regclass
+          |  AND a.attname = 'embedding'
+          |  AND NOT a.attisdropped""".stripMargin
+      )
+      val found    = rs.next()
+      val rendered = if (found) rs.getString("rendered_type") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      rendered shouldBe "vector(1024)"
+    } finally conn.close()
+  }
+
+  it should "build HNSW index on amendment_text_chunks.embedding (migration 040)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexdef FROM pg_indexes
+          |WHERE schemaname = 'public'
+          |  AND tablename = 'amendment_text_chunks'
+          |  AND indexname = 'idx_amendment_text_chunks_embedding'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("indexdef") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("USING hnsw")
+      defn should include("vector_cosine_ops")
+    } finally conn.close()
+  }
+
+  it should "enforce (version_id, chunk_index) partial UNIQUE on amendment_text_chunks (migration 040)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT indexdef FROM pg_indexes
+          |WHERE schemaname = 'public'
+          |  AND tablename = 'amendment_text_chunks'
+          |  AND indexname = 'uq_amendment_text_chunks_version_chunk'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("indexdef") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("UNIQUE")
+      defn should include("WHERE (version_id IS NOT NULL)")
+    } finally conn.close()
+  }
+
+  it should "enforce ON DELETE CASCADE for amendment_text_chunks FKs (migration 040)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT conname, pg_get_constraintdef(oid) AS def
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.amendment_text_chunks'::regclass
+          |  AND contype = 'f'""".stripMargin
+      )
+      val fks =
+        Iterator.continually(rs).takeWhile(_.next()).map(r => r.getString("conname") -> r.getString("def")).toMap
+      rs.close()
+      stmt.close()
+
+      val _ = fks("amendment_text_chunks_amendment_id_fkey") should include("ON DELETE CASCADE")
+      fks("amendment_text_chunks_version_id_fkey") should include("ON DELETE CASCADE")
+    } finally conn.close()
+  }
+
 }

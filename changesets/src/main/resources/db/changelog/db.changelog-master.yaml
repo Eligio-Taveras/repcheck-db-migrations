@@ -394,3 +394,47 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 037-amendment-version-type-codes-enum
+      author: repcheck
+      comment: "Create dedicated amendment_text_version_code_type enum ('Submitted', 'Modified') per plan §L3 — keeps the amendment value space separated from the bill-side text_version_code_type. No format_type_enum addition; pipeline DTO layer maps Congress.gov 'HTML' to existing 'Formatted Text'. Must commit before migration 039 references the new enum."
+      changes:
+        - sqlFile:
+            path: changes/037-amendment-version-type-codes-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 038-amendments-ingestion-columns
+      author: repcheck
+      comment: "Align amendments table with AmendmentDO (shared-models PR #44): add latest_action_time, parent_amendment_id (self-FK), last_text_check_at; widen number INT->TEXT; tighten chamber to NOT NULL with defensive backfill from amendment_type. bill_id stores the resolved ancestor bill (one column per concept — no separate effective_bill_id). Non-destructive: legacy denormalized text fields (text_url, text_format, text_version_type, text_date, text_content, latest_text_version_id) are LEFT IN PLACE for follow-up deprecation."
+      changes:
+        - sqlFile:
+            path: changes/038-amendments-ingestion-columns.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 039-amendment-text-versions-ingestion-columns
+      author: repcheck
+      comment: "Add genuinely new ingestion columns to amendment_text_versions (download_url, text_length) for the amendments-pipeline. Reuses existing columns instead of duplicating: url (source URL), version_date, format_type, fetched_at. Converts the existing version_type TEXT column to the dedicated amendment_text_version_code_type enum (created in migration 037). Adds partial indexes on fetched_at to drive the availability scheduler. Table has 0 rows everywhere so the cast is trivial."
+      changes:
+        - sqlFile:
+            path: changes/039-amendment-text-versions-ingestion-columns.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 040-amendment-text-chunks
+      author: repcheck
+      comment: "Create amendment_text_chunks — mirror of raw_bill_text (migration 026) for the amendments-pipeline. Chunked amendment text + per-chunk vector(1024) embeddings, HNSW cosine index. Purely additive (no existing table to migrate). pgvector / hnsw already enabled."
+      changes:
+        - sqlFile:
+            path: changes/040-amendment-text-chunks.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
