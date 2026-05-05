@@ -1172,7 +1172,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
   // Migration 038 — amendments ingestion columns
   // ---------------------------------------------------------------------------
 
-  it should "add latest_action_time / parent_amendment_id / last_text_check_at to amendments (migration 038)" taggedAs DockerRequired in {
+  it should "add proposed_date / latest_action_time / parent_amendment_id / last_text_check_at to amendments (migration 038)" taggedAs DockerRequired in {
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1180,7 +1180,8 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
         """SELECT column_name, data_type, is_nullable
           |FROM information_schema.columns
           |WHERE table_schema = 'public' AND table_name = 'amendments'
-          |  AND column_name IN ('latest_action_time',
+          |  AND column_name IN ('proposed_date',
+          |                      'latest_action_time',
           |                      'parent_amendment_id',
           |                      'last_text_check_at')""".stripMargin
       )
@@ -1193,26 +1194,30 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       stmt.close()
 
       val _ = cols.keySet shouldBe Set(
+        "proposed_date",
         "latest_action_time",
         "parent_amendment_id",
         "last_text_check_at",
       )
+      val _ = cols("proposed_date") shouldBe ("date", "YES")
       val _ = cols("latest_action_time") shouldBe ("text", "YES")
       val _ = cols("parent_amendment_id") shouldBe ("bigint", "YES")
       cols("last_text_check_at") shouldBe ("timestamp with time zone", "YES")
     } finally conn.close()
   }
 
-  it should "NOT add proposed_date or effective_bill_id to amendments (migration 038 — dropped after review)" taggedAs DockerRequired in {
-    // proposed_date: not in Congress.gov AmendmentNumber schema (only submittedDate + updateDate exist).
+  it should "NOT add effective_bill_id to amendments (migration 038 — dropped after review)" taggedAs DockerRequired in {
     // effective_bill_id: redundant with bill_id, which now stores the resolved ancestor bill directly.
+    // (proposed_date WAS dropped in an earlier revision of this PR, then restored after live-API
+    // verification 2026-05-05 confirmed Congress.gov returns proposedDate despite its absence
+    // from the openapi yaml — see migration 038 leading comment block.)
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
       val rs = stmt.executeQuery(
         """SELECT column_name FROM information_schema.columns
           |WHERE table_schema = 'public' AND table_name = 'amendments'
-          |  AND column_name IN ('proposed_date', 'effective_bill_id')""".stripMargin
+          |  AND column_name = 'effective_bill_id'""".stripMargin
       )
       val present = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("column_name")).toSet
       rs.close()

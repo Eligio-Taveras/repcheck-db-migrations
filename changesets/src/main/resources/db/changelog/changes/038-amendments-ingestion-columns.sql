@@ -17,15 +17,19 @@
 --   * billId                 (Option[Long])          → existing `bill_id` — populated with the RESOLVED ANCESTOR bill at ingest time (computed by walking parent_amendment_id chain). One column, one meaning.
 --   * chamber                (Chamber, NOT NULL)     → existing `chamber chamber_type` tightened to NOT NULL (live table currently nullable; AmendmentDO PR #44 made it required)
 --   * description, purpose, sponsorMemberId, submittedDate, latestActionDate, latestActionText, updateDate, apiUrl → existing columns
+--   * proposedDate           (Option[LocalDate])     → NEW `proposed_date DATE` (restored after live-API verification 2026-05-05; field is present in actual Congress.gov responses despite being undocumented in the openapi yaml)
 --   * latestActionTime       (Option[String])        → NEW `latest_action_time TEXT`
 --   * parentAmendmentId      (Option[Long])          → NEW `parent_amendment_id BIGINT REFERENCES amendments(id)` (sub-amendment chain — tracks the IMMEDIATE parent only; the ancestor bill is recorded directly on bill_id)
 --   * lastTextCheckAt        (Option[Instant])       → NEW `last_text_check_at TIMESTAMPTZ` (set on successful text check per §7.5)
 --   * createdAt, updatedAt   → existing columns
 --
--- Note: there is NO `proposed_date` column. The Congress.gov AmendmentNumber
--- schema has only `submittedDate` + `updateDate` (verified against
--- docs/reference/congress-gov-api.yaml). The shared-models PR #44 was revised
--- in parallel to drop `proposedDate` from AmendmentDO.
+-- Note on `proposed_date`: an earlier revision of this migration dropped this
+-- column based on its absence from docs/reference/congress-gov-api.yaml.
+-- That was wrong: the openapi yaml is incomplete. A live call to
+-- `https://api.congress.gov/v3/amendment/117/samdt/2137` on 2026-05-05
+-- returned `"proposedDate": "2021-08-01T04:00:00Z"`, confirming the field is
+-- real. The column is restored here, and shared-models PR #44 is being
+-- updated in parallel to restore `proposedDate` on AmendmentDO + AmendmentDetailDTO.
 --
 -- Note: there is NO `effective_bill_id` column. The earlier draft introduced
 -- both `bill_id` (immediate parent's bill) and `effective_bill_id` (resolved
@@ -42,10 +46,13 @@
 -- 1. Add new columns
 -- ===========================================================================
 
+ALTER TABLE amendments ADD COLUMN IF NOT EXISTS proposed_date         DATE;
 ALTER TABLE amendments ADD COLUMN IF NOT EXISTS latest_action_time    TEXT;
 ALTER TABLE amendments ADD COLUMN IF NOT EXISTS parent_amendment_id   BIGINT;
 ALTER TABLE amendments ADD COLUMN IF NOT EXISTS last_text_check_at    TIMESTAMPTZ;
 
+COMMENT ON COLUMN amendments.proposed_date IS
+    'Date the amendment was proposed on the floor (e.g., when first offered for floor consideration). Distinct from submitted_date which is when the amendment was filed. Sourced from Congress.gov AmendmentDetailDTO.proposedDate (verified live 2026-05-05; field is present in actual responses despite absence from the openapi yaml).';
 COMMENT ON COLUMN amendments.latest_action_time IS
     'Time-of-day component of the latest action (e.g., "14:30:00"), kept as a raw string. Pairs with latest_action_date. Per LatestActionDTO.actionTime added in shared-models PR #44.';
 COMMENT ON COLUMN amendments.parent_amendment_id IS
