@@ -1568,4 +1568,249 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
     } finally conn.close()
   }
 
+  // ---------------------------------------------------------------------------
+  // Migration 041 — legislation_type_enum (discriminator)
+  // ---------------------------------------------------------------------------
+
+  it should "create legislation_type_enum with values BILL/AMENDMENT (migration 041)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT enumlabel FROM pg_enum
+          |WHERE enumtypid = 'legislation_type_enum'::regtype
+          |ORDER BY enumsortorder""".stripMargin
+      )
+      val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toList
+      rs.close()
+      stmt.close()
+      labels shouldBe List("BILL", "AMENDMENT")
+    } finally conn.close()
+  }
+
+  // ---------------------------------------------------------------------------
+  // Migration 042 — votes.legislation_type restructure
+  // ---------------------------------------------------------------------------
+
+  it should "rename votes.legislation_type to votes.bill_type (migration 042)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, udt_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'votes'
+          |  AND column_name IN ('bill_type', 'legislation_type', 'amendment_type')""".stripMargin
+      )
+      val cols = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r => r.getString("column_name") -> r.getString("udt_name"))
+        .toMap
+      rs.close()
+      stmt.close()
+
+      // bill_type is the rename of the previously existing legislation_type column
+      // (which had been retyped to bill_type_enum in migration 013).
+      val _ = cols.keySet shouldBe Set("bill_type", "amendment_type", "legislation_type")
+      val _ = cols("bill_type") shouldBe "bill_type_enum"
+      val _ = cols("amendment_type") shouldBe "amendment_type_enum"
+      cols("legislation_type") shouldBe "legislation_type_enum"
+    } finally conn.close()
+  }
+
+  it should "make all three votes legislation columns nullable (migration 042)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, is_nullable FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'votes'
+          |  AND column_name IN ('bill_type', 'amendment_type', 'legislation_type')""".stripMargin
+      )
+      val nullability = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r => r.getString("column_name") -> r.getString("is_nullable"))
+        .toMap
+      rs.close()
+      stmt.close()
+      nullability.values.toSet shouldBe Set("YES")
+    } finally conn.close()
+  }
+
+  it should "enforce votes_legislation_type_subtype_check on votes (migration 042)" taggedAs DockerRequired in {
+    // CHECK exists.
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT pg_get_constraintdef(oid) AS def
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.votes'::regclass
+          |  AND conname = 'votes_legislation_type_subtype_check'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("def") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("CHECK")
+      val _ = defn should include("legislation_type")
+      val _ = defn should include("bill_type")
+      defn should include("amendment_type")
+    } finally conn.close()
+  }
+
+  it should "accept the three valid (legislation_type, bill_type, amendment_type) shapes on votes (migration 042)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      conn.setAutoCommit(false)
+      val stmt = conn.createStatement()
+
+      // (NULL, NULL, NULL) — procedural vote with no associated legislation
+      val _ = stmt.executeUpdate(
+        """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number)
+          |VALUES ('M042_NULL', 119, 'House'::chamber_type, 1, 4201)""".stripMargin
+      )
+
+      // ('BILL', bill_type, NULL)
+      val _ = stmt.executeUpdate(
+        """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number,
+          |                   legislation_type, bill_type, amendment_type)
+          |VALUES ('M042_BILL', 119, 'House'::chamber_type, 1, 4202,
+          |        'BILL'::legislation_type_enum, 'hr'::bill_type_enum, NULL)""".stripMargin
+      )
+
+      // ('AMENDMENT', NULL, amendment_type)
+      val _ = stmt.executeUpdate(
+        """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number,
+          |                   legislation_type, bill_type, amendment_type)
+          |VALUES ('M042_AMDT', 119, 'House'::chamber_type, 1, 4203,
+          |        'AMENDMENT'::legislation_type_enum, NULL, 'hamdt'::amendment_type_enum)""".stripMargin
+      )
+
+      stmt.close()
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
+  it should "reject invalid (legislation_type, bill_type, amendment_type) combinations on votes (migration 042)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      conn.setAutoCommit(false)
+      val stmt = conn.createStatement()
+
+      // Invalid: discriminator says BILL but only amendment_type is set.
+      stmt.execute("SAVEPOINT sp_bill_with_amdt")
+      val rejectBillWithAmdt = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number,
+            |                   legislation_type, bill_type, amendment_type)
+            |VALUES ('M042_BAD1', 119, 'House'::chamber_type, 1, 4211,
+            |        'BILL'::legislation_type_enum, NULL, 'hamdt'::amendment_type_enum)""".stripMargin
+        )
+      }
+      stmt.execute("ROLLBACK TO SAVEPOINT sp_bill_with_amdt")
+      val _ = rejectBillWithAmdt.isFailure shouldBe true
+
+      // Invalid: discriminator says AMENDMENT but bill_type is set.
+      stmt.execute("SAVEPOINT sp_amdt_with_bill")
+      val rejectAmdtWithBill = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number,
+            |                   legislation_type, bill_type, amendment_type)
+            |VALUES ('M042_BAD2', 119, 'House'::chamber_type, 1, 4212,
+            |        'AMENDMENT'::legislation_type_enum, 'hr'::bill_type_enum, NULL)""".stripMargin
+        )
+      }
+      stmt.execute("ROLLBACK TO SAVEPOINT sp_amdt_with_bill")
+      val _ = rejectAmdtWithBill.isFailure shouldBe true
+
+      // Invalid: discriminator NULL but a subtype is set.
+      stmt.execute("SAVEPOINT sp_null_with_bill")
+      val rejectNullWithBill = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number,
+            |                   legislation_type, bill_type, amendment_type)
+            |VALUES ('M042_BAD3', 119, 'House'::chamber_type, 1, 4213,
+            |        NULL, 'hr'::bill_type_enum, NULL)""".stripMargin
+        )
+      }
+      stmt.execute("ROLLBACK TO SAVEPOINT sp_null_with_bill")
+      val _ = rejectNullWithBill.isFailure shouldBe true
+
+      // Invalid: BILL with both subtype columns set.
+      stmt.execute("SAVEPOINT sp_bill_with_both")
+      val rejectBoth = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          """INSERT INTO votes (natural_key, congress, chamber, session_number, roll_number,
+            |                   legislation_type, bill_type, amendment_type)
+            |VALUES ('M042_BAD4', 119, 'House'::chamber_type, 1, 4214,
+            |        'BILL'::legislation_type_enum, 'hr'::bill_type_enum, 'hamdt'::amendment_type_enum)""".stripMargin
+        )
+      }
+      stmt.execute("ROLLBACK TO SAVEPOINT sp_bill_with_both")
+      val _ = rejectBoth.isFailure shouldBe true
+
+      stmt.close()
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Migration 043 — vote_history.legislation_type restructure (mirrors 042)
+  // ---------------------------------------------------------------------------
+
+  it should "rename vote_history.legislation_type to vote_history.bill_type (migration 043)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT column_name, udt_name FROM information_schema.columns
+          |WHERE table_schema = 'public' AND table_name = 'vote_history'
+          |  AND column_name IN ('bill_type', 'legislation_type', 'amendment_type')""".stripMargin
+      )
+      val cols = Iterator
+        .continually(rs)
+        .takeWhile(_.next())
+        .map(r => r.getString("column_name") -> r.getString("udt_name"))
+        .toMap
+      rs.close()
+      stmt.close()
+
+      val _ = cols.keySet shouldBe Set("bill_type", "amendment_type", "legislation_type")
+      val _ = cols("bill_type") shouldBe "bill_type_enum"
+      val _ = cols("amendment_type") shouldBe "amendment_type_enum"
+      cols("legislation_type") shouldBe "legislation_type_enum"
+    } finally conn.close()
+  }
+
+  it should "enforce vote_history_legislation_type_subtype_check on vote_history (migration 043)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT pg_get_constraintdef(oid) AS def
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.vote_history'::regclass
+          |  AND conname = 'vote_history_legislation_type_subtype_check'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("def") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("CHECK")
+      val _ = defn should include("legislation_type")
+      val _ = defn should include("bill_type")
+      defn should include("amendment_type")
+    } finally conn.close()
+  }
+
 }
