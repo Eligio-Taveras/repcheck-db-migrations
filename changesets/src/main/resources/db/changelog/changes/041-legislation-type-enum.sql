@@ -1,0 +1,23 @@
+-- Migration 041: legislation_type_enum (BILL / AMENDMENT discriminator)
+--
+-- Introduces a dedicated discriminator enum for the votes / vote_history
+-- restructure in migrations 042 / 043. Today the votes tables can only
+-- carry bill-side identifiers because `legislation_type` was retyped to
+-- bill_type_enum in migration 013. Amendment votes can't be stored.
+--
+-- The new design splits the single column into three:
+--   * legislation_type legislation_type_enum  -- discriminator: 'BILL' or 'AMENDMENT'
+--   * bill_type        bill_type_enum         -- populated iff discriminator = 'BILL'
+--   * amendment_type   amendment_type_enum    -- populated iff discriminator = 'AMENDMENT'
+--
+-- This migration only creates the discriminator enum; the column shape
+-- changes happen in 042 (votes) and 043 (vote_history).
+--
+-- This changeset is split out so the new enum is committed before
+-- migrations 042 / 043 reference it. CREATE TYPE has no transactional
+-- restriction (unlike ALTER TYPE ADD VALUE), but separating the type
+-- definition from its first uses keeps migrations focused and makes it
+-- easy to reuse the enum elsewhere later (e.g., snapshot tables, scoring
+-- pipelines that key off legislation kind).
+
+CREATE TYPE legislation_type_enum AS ENUM ('BILL', 'AMENDMENT');

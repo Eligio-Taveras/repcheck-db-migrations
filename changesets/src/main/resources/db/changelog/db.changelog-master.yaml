@@ -438,3 +438,36 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 041-legislation-type-enum
+      author: repcheck
+      comment: "Create dedicated legislation_type_enum ('BILL', 'AMENDMENT') — discriminator for the upcoming votes / vote_history kind+subtype restructure (042 / 043). Split from the column-shape changes so the new enum is committed before the ALTER TABLE statements that reference it."
+      changes:
+        - sqlFile:
+            path: changes/041-legislation-type-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 042-votes-legislation-type-restructure
+      author: repcheck
+      comment: "Restructure votes.legislation_type — rename the existing bill_type_enum column to bill_type, add amendment_type amendment_type_enum, add legislation_type legislation_type_enum discriminator, backfill discriminator='BILL' for any row carrying a bill_type, then add CHECK enforcing exactly one subtype column populated matching the discriminator (or all-NULL for procedural votes). Lets amendment votes (HAMDT/SAMDT/SUAMDT) be stored with full type fidelity instead of being squashed into a bill-shaped column. Coordinated with the parallel repcheck-shared-models bump that adds legislationType / amendmentType to VoteDO."
+      changes:
+        - sqlFile:
+            path: changes/042-votes-legislation-type-restructure.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 043-vote-history-legislation-type-restructure
+      author: repcheck
+      comment: "Mirror migration 042 against vote_history — same column rename, additions, backfill, and CHECK constraint. The vote_history schema must track votes so the DoobieVoteHistoryArchiver can copy a row over without translation."
+      changes:
+        - sqlFile:
+            path: changes/043-vote-history-legislation-type-restructure.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
