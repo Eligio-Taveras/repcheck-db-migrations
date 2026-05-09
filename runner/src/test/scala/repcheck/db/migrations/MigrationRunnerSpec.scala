@@ -1119,7 +1119,10 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
   // Migration 037 — dedicated amendment_text_version_code_type enum (per plan §L3)
   // ---------------------------------------------------------------------------
 
-  it should "create dedicated amendment_text_version_code_type enum with Submitted/Modified (migration 037)" taggedAs DockerRequired in {
+  it should "create dedicated amendment_text_version_code_type enum with SUB/MOD (migrations 037 + 045)" taggedAs DockerRequired in {
+    // 037 created the enum with long-form 'Submitted'/'Modified' labels; 045 renamed
+    // them in place to the §7.6-spec short codes 'SUB'/'MOD'. After all migrations
+    // apply, only the renamed labels are present.
     val conn = getConnection
     try {
       val stmt = conn.createStatement()
@@ -1131,11 +1134,11 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toList
       rs.close()
       stmt.close()
-      labels shouldBe List("Submitted", "Modified")
+      labels shouldBe List("SUB", "MOD")
     } finally conn.close()
   }
 
-  it should "NOT add 'Submitted'/'Modified' to bill-side text_version_code_type (migration 037 §L3 separation)" taggedAs DockerRequired in {
+  it should "NOT add 'SUB'/'MOD' to bill-side text_version_code_type (migration 037 §L3 separation)" taggedAs DockerRequired in {
     // Plan §L3: amendment codes live in their own enum, NOT co-mingled with bill codes.
     val conn = getConnection
     try {
@@ -1143,7 +1146,7 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       val rs = stmt.executeQuery(
         """SELECT enumlabel FROM pg_enum
           |WHERE enumtypid = 'text_version_code_type'::regtype
-          |  AND enumlabel IN ('Submitted', 'Modified')""".stripMargin
+          |  AND enumlabel IN ('SUB', 'MOD', 'Submitted', 'Modified')""".stripMargin
       )
       val labels = Iterator.continually(rs).takeWhile(_.next()).map(_.getString("enumlabel")).toSet
       rs.close()
@@ -1812,5 +1815,82 @@ class MigrationRunnerSpec extends AnyFlatSpec with Matchers with DockerPostgresS
       defn should include("amendment_type")
     } finally conn.close()
   }
+
+  // ---------------------------------------------------------------------------
+  // Migration 044 — UNIQUE (amendment_id, version_type, format_type)
+  // ---------------------------------------------------------------------------
+
+  it should "add uq_amendment_text_versions_amendment_type_format on amendment_text_versions (migration 044)" taggedAs DockerRequired in {
+    val conn = getConnection
+    try {
+      val stmt = conn.createStatement()
+      val rs = stmt.executeQuery(
+        """SELECT pg_get_constraintdef(oid) AS def
+          |FROM pg_constraint
+          |WHERE conrelid = 'public.amendment_text_versions'::regclass
+          |  AND conname = 'uq_amendment_text_versions_amendment_type_format'""".stripMargin
+      )
+      val found = rs.next()
+      val defn  = if (found) rs.getString("def") else ""
+      rs.close()
+      stmt.close()
+      val _ = found shouldBe true
+      val _ = defn should include("UNIQUE")
+      val _ = defn should include("amendment_id")
+      val _ = defn should include("version_type")
+      defn should include("format_type")
+    } finally conn.close()
+  }
+
+  it should "support ON CONFLICT against (amendment_id, version_type, format_type) (migration 044)" taggedAs DockerRequired in {
+    // Validates the spec rationale: with the unique constraint in place, an
+    // ON CONFLICT clause referencing the tuple is accepted by Postgres and a
+    // duplicate insert is correctly absorbed instead of erroring.
+    val conn = getConnection
+    conn.setAutoCommit(false)
+    try {
+      val stmt = conn.createStatement()
+      val _ = stmt.executeUpdate(
+        """INSERT INTO amendments (id, natural_key, congress, chamber, amendment_type, number)
+          |VALUES (90044, 'M044-test-amdt', 119, 'House'::chamber_type, 'hamdt'::amendment_type_enum, '1')""".stripMargin
+      )
+      val _ = stmt.executeUpdate(
+        """INSERT INTO amendment_text_versions
+          |  (amendment_id, version_type, version_date, url, format_type)
+          |VALUES
+          |  (90044, 'SUB'::amendment_text_version_code_type, NOW(), 'https://example.test/v1',
+          |   'PDF'::format_type_enum)""".stripMargin
+      )
+      // Second insert with the same tuple — should be absorbed by ON CONFLICT,
+      // not raise a duplicate-key error.
+      val onConflict = scala.util.Try {
+        val _ = stmt.executeUpdate(
+          """INSERT INTO amendment_text_versions
+            |  (amendment_id, version_type, version_date, url, format_type)
+            |VALUES
+            |  (90044, 'SUB'::amendment_text_version_code_type, NOW(), 'https://example.test/v2',
+            |   'PDF'::format_type_enum)
+            |ON CONFLICT (amendment_id, version_type, format_type)
+            |DO UPDATE SET url = EXCLUDED.url""".stripMargin
+        )
+      }
+      stmt.close()
+      onConflict.isSuccess shouldBe true
+    } finally {
+      conn.rollback()
+      conn.setAutoCommit(true)
+      conn.close()
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Migration 045 — rename amendment_text_version_code_type values to short codes
+  // ---------------------------------------------------------------------------
+  //
+  // The post-rename final state ('SUB', 'MOD') is asserted by the migration 037
+  // test above ("create dedicated amendment_text_version_code_type enum with
+  // SUB/MOD"), which is renamed to credit migrations 037 + 045 together. No
+  // separate test needed — duplicating the same pg_enum assertion would add no
+  // signal.
 
 }
