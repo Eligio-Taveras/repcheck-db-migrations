@@ -471,3 +471,26 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 044-amendment-text-versions-unique-constraint
+      author: repcheck
+      comment: "Add UNIQUE (amendment_id, version_type, format_type) to amendment_text_versions per amendments-pipeline §7.6 spec. Lets the §7.6 processor use the canonical ON CONFLICT upsert form instead of the SELECT-then-INSERT/UPDATE workaround. Table has 0 rows everywhere so no data conflicts."
+      changes:
+        - sqlFile:
+            path: changes/044-amendment-text-versions-unique-constraint.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
+
+  - changeSet:
+      id: 045-amendment-text-version-codes-rename
+      author: repcheck
+      runInTransaction: false
+      comment: "Rename amendment_text_version_code_type values 'Submitted'→'SUB' and 'Modified'→'MOD' to match amendments-pipeline §7.6 spec L3. ALTER TYPE RENAME VALUE updates the catalog only (O(1)), no data rewrite. Table has 0 rows everywhere. After this lands the §7.6 short→long translation shim becomes dead code (removed in the data-ingestion follow-up). runInTransaction: false matches the existing convention for ALTER TYPE statements (see 017a)."
+      changes:
+        - sqlFile:
+            path: changes/045-amendment-text-version-codes-rename.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
