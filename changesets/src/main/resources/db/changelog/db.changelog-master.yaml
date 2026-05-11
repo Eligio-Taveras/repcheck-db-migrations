@@ -494,3 +494,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 046-committee-membership-refresher
+      author: repcheck
+      comment: "Evolve committees, committee_members, bill_committee_referrals for the committee-membership-refresher pipeline. Adds is_current to committees, temporal congress/side/rank columns + widened UNIQUE to committee_members, report_date + widened UNIQUE to bill_committee_referrals, and sponsor_committee_id FK on amendments."
+      changes:
+        - sqlFile:
+            path: changes/046-committee-membership-refresher.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
