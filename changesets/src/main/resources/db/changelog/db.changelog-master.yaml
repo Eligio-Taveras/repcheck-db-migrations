@@ -505,3 +505,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 047-sponsor-type-enum
+      author: repcheck
+      comment: "Add sponsor_type_enum discriminator to amendments — 'member' or 'committee'. Complements the existing sponsor_member_id (FK→members) and sponsor_committee_id (FK→committees) FK columns so consumers can query by sponsor kind without NULL-checking two columns. Backfills from existing FK values."
+      changes:
+        - sqlFile:
+            path: changes/047-sponsor-type-enum.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
