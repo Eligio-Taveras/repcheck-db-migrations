@@ -14,14 +14,11 @@
 -- ===========================================================================
 -- 1. Create the enum type
 -- ===========================================================================
+-- No IF NOT EXISTS guard needed — Liquibase changeset tracking guarantees
+-- single execution. The DO $$ block is avoided because splitStatements: true
+-- in the changelog causes Liquibase to split on internal semicolons.
 
-DO $$
-BEGIN
-    IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'sponsor_type_enum') THEN
-        CREATE TYPE sponsor_type_enum AS ENUM ('member', 'committee');
-    END IF;
-END
-$$;
+CREATE TYPE sponsor_type_enum AS ENUM ('member', 'committee');
 
 -- ===========================================================================
 -- 2. Add sponsor_type column
