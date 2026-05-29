@@ -516,3 +516,15 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 048-committee-membership-fixes
+      author: repcheck
+      runInTransaction: false
+      comment: "Committee-membership-refresher runtime fixes. Adds 'Task Force' to committee_type_enum (Congress.gov returns it as a committeeTypeCode) and adds created_at/updated_at to committee_members (written by DoobieCommitteeMemberRepository but never present in the schema). All statements IF NOT EXISTS-guarded to tolerate hot-patched dev/local DBs. runInTransaction: false matches the ALTER TYPE convention (see 045)."
+      changes:
+        - sqlFile:
+            path: changes/048-committee-membership-fixes.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
