@@ -528,3 +528,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 049-bill-summaries
+      author: repcheck
+      comment: "Create bill_summaries — one row per CRS summary stage (FK to bills, unique (bill_id, version_code)), mirroring bill_text_versions. Owned by bill-summary-pipeline. Additive/non-breaking; the bills.summary_* columns are dropped in the Phase 2 contract migration once consumers move over."
+      changes:
+        - sqlFile:
+            path: changes/049-bill-summaries.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
