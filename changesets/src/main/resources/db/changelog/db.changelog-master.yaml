@@ -539,3 +539,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 050-drop-bill-text-summary-columns
+      author: repcheck
+      comment: "Phase 2c contract: drop retired text_*/summary_* columns from bills (8) and bill_history (7, no text_content). Superseded by bill_text_versions (text + version_code via latest_text_version_id) and bill_summaries (CRS stages). Run only after the Phase 2c expand deploy (nothing reads/writes these columns)."
+      changes:
+        - sqlFile:
+            path: changes/050-drop-bill-text-summary-columns.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
