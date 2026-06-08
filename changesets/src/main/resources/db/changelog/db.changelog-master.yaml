@@ -550,3 +550,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 051-decomposition-schema
+      author: repcheck
+      comment: "Decomposition schema (D2): bill_text_sections += sub_index/updated_at + unit uniqueness (version_id, section_index, sub_index); reshape bill_concept_groups to label/concept_summary/taxonomy_version/updated_at (drop votr group_id/title/simplified_text); NEW concept_taxonomy (seeded 'unclassified') + scored bill_concept_group_taxonomy junction. All four tables empty -> no data loss."
+      changes:
+        - sqlFile:
+            path: changes/051-decomposition-schema.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
