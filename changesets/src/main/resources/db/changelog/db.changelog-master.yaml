@@ -561,3 +561,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 052-bill-concept-topics
+      author: repcheck
+      comment: "Create bill_concept_topics (vectors-primary): stance-tagged topics per concept group. `topic` (neutral noun phrase) + topic_embedding vector(1024)/HNSW is the cross-bill retrieval vector; phrase/effect/impact/scope/entity are stance metadata for alignment scoring. FK bill_concept_groups(id) ON DELETE CASCADE; no unique on (group, topic) — the summarizer emits legitimate duplicate topics that differ on phrase/effect/impact. Column order mirrors BillConceptTopicDO. Additive — new empty table."
+      changes:
+        - sqlFile:
+            path: changes/052-bill-concept-topics.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
