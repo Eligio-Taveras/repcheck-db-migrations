@@ -572,3 +572,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 053-snapshot-decomposition-runs
+      author: repcheck
+      comment: "SNAP snapshot manifest + decomposition-run provenance (vectors-primary). NEW pre_llm_metadata_snapshots (snapshot_version SERIAL PK — Int per the SNAP design; coarse, one per capture T, shared across users) + pre_llm_metadata_snapshot_members (frozen version_id set + subject_count, no FK on version_id) + bill_decomposition_runs (per-sweep provenance: orchestrator/embedder/clusterer/prompt versions + status, FK snapshot_version). bill_concept_groups += decomposition_snapshot_version + run_id (FKs) + index (version_id, decomposition_snapshot_version) for the existsForVersion reuse-check. Additive — new/empty tables."
+      changes:
+        - sqlFile:
+            path: changes/053-snapshot-decomposition-runs.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
