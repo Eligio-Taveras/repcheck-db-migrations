@@ -583,3 +583,14 @@ databaseChangeLog:
             relativeToChangelogFile: true
             splitStatements: true
             stripComments: false
+
+  - changeSet:
+      id: 054-drop-decomposition-snapshot
+      author: repcheck
+      comment: "Drop the decomposition snapshot schema (053 reversal): a bill text version is self-contained, so decomposition keys on version_id ALONE — not (version_id, snapshot_version). Drop bill_concept_groups.decomposition_snapshot_version (+ reuse index, replaced by an index on version_id), bill_decomposition_runs.snapshot_version, and the pre_llm_metadata_snapshots/_members manifest (decomposition-only, never populated). Keep bill_decomposition_runs provenance + bill_concept_groups.run_id. All tables empty -> no data loss."
+      changes:
+        - sqlFile:
+            path: changes/054-drop-decomposition-snapshot.sql
+            relativeToChangelogFile: true
+            splitStatements: true
+            stripComments: false
